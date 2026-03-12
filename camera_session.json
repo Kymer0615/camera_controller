@@ -1,0 +1,34 @@
+{
+  "device_index": 2,
+  "device_path": "/dev/video2",
+  "pixel_format": "YUYV",
+  "resolution": [
+    1600,
+    1200
+  ],
+  "save_directory": "/mnt/disk/datasets/untitled folder",
+  "file_prefix": "capture",
+  "image_extension": "png",
+  "initial_zoom": 1.0,
+  "preview_width": 960,
+  "preview_height": 1080,
+  "controls": {
+    "brightness": 0,
+    "contrast": 32,
+    "saturation": 64,
+    "hue": 0,
+    "white_balance_automatic": 0,
+    "gamma": 72,
+    "gain": 0,
+    "power_line_frequency": 2,
+    "white_balance_temperature": 6500,
+    "sharpness": 0,
+    "backlight_compensation": 0,
+    "auto_exposure": 1,
+    "exposure_time_absolute": 1500,
+    "exposure_dynamic_framerate": 0,
+    "pan_absolute": 0,
+    "tilt_absolute": 0,
+    "zoom_absolute": 0
+  }
+}
