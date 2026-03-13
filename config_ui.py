@@ -24,6 +24,9 @@ class SessionConfig:
     initial_zoom: float = 1.0
     preview_width: int = 1280
     preview_height: int = 720
+    headless_capture_count: int = 1
+    headless_interval_seconds: float = 0.0
+    headless_warmup_frames: int = 5
     controls: dict[str, int] | None = None
 
     def to_json(self) -> str:
@@ -377,6 +380,9 @@ class ConfigWindow:
             initial_zoom=float(self.zoom_var.get()),
             preview_width=int(self.preview_width_var.get()),
             preview_height=int(self.preview_height_var.get()),
+            headless_capture_count=1,
+            headless_interval_seconds=0.0,
+            headless_warmup_frames=5,
             controls=self._collect_controls(),
         )
 

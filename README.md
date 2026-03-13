@@ -93,6 +93,16 @@ After the configuration is ready, click `Start Preview`.
 
 The preview opens in a resizable OpenCV window named `Camera Preview`.
 
+At the same time, a second Tk window named `Runtime Controls` opens. Use it during streaming to:
+
+- change live V4L2 control values
+- update save folder, filename prefix, image extension, and preview zoom
+- apply changes without restarting the preview
+- save the current runtime state to a JSON config
+- load a saved config back into the running session
+
+Runtime config loads keep the current device, pixel format, and resolution fixed for the active stream. If those fields differ in the JSON file, the app rejects the load instead of trying to re-open the camera mid-session.
+
 You can:
 
 - drag the window borders to resize it
@@ -162,6 +172,26 @@ camera-controller --config my_session.json
 camera-controller --config my_session.json --run-config-direct
 ```
 
+### Run headless from a saved config
+
+This skips both the Tk setup window and the OpenCV preview window and saves frames directly to the configured output folder.
+
+```bash
+camera-controller --config my_session.json --headless
+```
+
+Optional overrides for headless mode:
+
+```bash
+camera-controller --config my_session.json --headless --count 10 --interval 0.5 --warmup-frames 10
+```
+
+Supported JSON fields for headless defaults:
+
+- `headless_capture_count`
+- `headless_interval_seconds`
+- `headless_warmup_frames`
+
 ## 8. Typical Usage
 
 Example workflow:
@@ -176,6 +206,12 @@ Example workflow:
 8. Press `c` to save images.
 9. Press `d` if you want to remove the most recent capture.
 10. Press `q` when finished.
+
+Headless example:
+
+1. Export a config from the setup window or create a JSON config manually.
+2. Run `camera-controller --config my_session.json --headless`.
+3. Check the configured save folder for the captured images and `session_config.json`.
 
 ## 9. Relation to `gaussian_lensless_camera`
 
