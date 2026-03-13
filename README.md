@@ -1,6 +1,6 @@
 # Camera Controller
 
-`camera_controller` is a Linux-first camera capture tool built from the control logic in `gaussian_lensless_camera/src/camera.py` and `gaussian_lensless_camera/src/capture.py`, but reorganized into a standalone package with:
+`camera_controller` is a Ubuntu-first camera capture tool。
 
 - a pre-start setup window
 - support for changing camera format, resolution, exposure, brightness, and other V4L2 controls before streaming
@@ -25,7 +25,6 @@ sudo apt install v4l-utils python3-tk
 Install Python dependencies from the project root:
 
 ```bash
-cd /mnt/disk/projects/camera_controller
 python3 -m pip install -e . --no-build-isolation
 ```
 
@@ -40,14 +39,12 @@ python3 -m pip install . --no-build-isolation
 From the terminal:
 
 ```bash
-cd /mnt/disk/projects/camera_controller
 camera-controller
 ```
 
 You can also run it without installing the script:
 
 ```bash
-cd /mnt/disk/projects/camera_controller
 python3 .
 ```
 
