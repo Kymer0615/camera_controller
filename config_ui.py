@@ -11,6 +11,31 @@ try:
 except ImportError:
     from v4l2 import CameraCapabilities, CameraDevice, ControlInfo, get_capabilities, list_devices
 
+RAW_FORMAT_PREFIXES = ("BA", "BG", "GB", "GR", "RG")
+RAW_FORMATS = {
+    "BA81",
+    "BGGR",
+    "GBRG",
+    "GRBG",
+    "RGGB",
+    "BG10",
+    "GB10",
+    "BA10",
+    "RG10",
+    "BG12",
+    "GB12",
+    "BA12",
+    "RG12",
+    "BG14",
+    "GB14",
+    "GR14",
+    "RG14",
+    "BYR2",
+    "GB16",
+    "GR16",
+    "RG16",
+}
+
 
 @dataclass(slots=True)
 class SessionConfig:
@@ -212,6 +237,8 @@ class ConfigWindow:
                 self.resolution_var.set(labels[0])
         else:
             self.resolution_combo.configure(state="normal")
+            if not self.resolution_var.get() or self._looks_like_invalid_resolution(self.resolution_var.get()):
+                self.resolution_var.set(self._default_resolution_for_format(self.format_var.get()))
         self._sync_processing_toggle()
 
     def _selected_device(self) -> CameraDevice | None:
@@ -225,11 +252,32 @@ class ConfigWindow:
         return self.devices[0]
 
     def _sync_processing_toggle(self) -> None:
-        is_raw = self.format_var.get().startswith(("BA", "BG", "GB", "GR", "RG")) or self.format_var.get() == "BA81"
+        is_raw = self._is_raw_format(self.format_var.get())
         state = "normal" if is_raw else "disabled"
         self.raw_processing_check.configure(state=state)
         if not is_raw:
             self.raw_processing_var.set(True)
+
+    def _is_raw_format(self, pixel_format: str) -> bool:
+        return pixel_format in RAW_FORMATS or pixel_format.startswith(RAW_FORMAT_PREFIXES)
+
+    def _default_resolution_for_format(self, pixel_format: str) -> str:
+        if pixel_format == "RG10":
+            return "1456x1088"
+        if self._is_raw_format(pixel_format):
+            return "1456x1088"
+        return "1280x720"
+
+    def _looks_like_invalid_resolution(self, resolution_text: str) -> bool:
+        if "x" not in resolution_text:
+            return True
+        width_text, height_text = resolution_text.split("x", 1)
+        try:
+            width = int(width_text)
+            height = int(height_text)
+        except ValueError:
+            return True
+        return width >= 8192 or height >= 8192 or width * height >= 64_000_000
 
     def _render_controls(self) -> None:
         for widget in self.control_widgets:

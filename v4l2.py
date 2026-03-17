@@ -101,10 +101,27 @@ def list_formats(device_path: str) -> dict[str, list[tuple[int, int]]]:
             min_height = int(stepwise_match.group(2))
             max_width = int(stepwise_match.group(3))
             max_height = int(stepwise_match.group(4))
+            if _looks_like_unconfigured_stepwise_range(min_width, min_height, max_width, max_height):
+                continue
             for size in ((max_width, max_height), (min_width, min_height)):
                 if size not in formats[current_format]:
                     formats[current_format].append(size)
     return formats
+
+
+def _looks_like_unconfigured_stepwise_range(
+    min_width: int,
+    min_height: int,
+    max_width: int,
+    max_height: int,
+) -> bool:
+    if max_width >= 8192 or max_height >= 8192:
+        return True
+    if max_width * max_height >= 64_000_000:
+        return True
+    if min_width == 16 and min_height == 16 and max_width == max_height:
+        return True
+    return False
 
 
 def list_controls(device_path: str) -> dict[str, ControlInfo]:

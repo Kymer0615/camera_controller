@@ -47,6 +47,7 @@ def _fourcc(codec: str) -> int:
 
 
 def _open_capture(config: SessionConfig) -> cv2.VideoCapture:
+    _validate_resolution(config)
     capture = cv2.VideoCapture(config.device_index, cv2.CAP_V4L2)
     capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     capture.set(cv2.CAP_PROP_FOURCC, _fourcc(config.pixel_format))
@@ -57,6 +58,16 @@ def _open_capture(config: SessionConfig) -> cv2.VideoCapture:
     if not capture.isOpened():
         raise RuntimeError(f"Could not open camera {config.device_path}.")
     return capture
+
+
+def _validate_resolution(config: SessionConfig) -> None:
+    width, height = config.resolution
+    if width >= 8192 or height >= 8192 or width * height >= 64_000_000:
+        raise ValueError(
+            f"Resolution {width}x{height} looks invalid for {config.device_path}. "
+            "This Pi camera node is likely exposing an unconfigured stepwise range. "
+            "Enter the real sensor mode manually, for example 1456x1088 for the global shutter camera."
+        )
 
 
 def _is_raw_format(pixel_format: str) -> bool:
