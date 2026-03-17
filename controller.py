@@ -31,10 +31,10 @@ import cv2
 
 try:
     from .config_ui import ConfigWindow, SessionConfig
-    from .v4l2 import ControlInfo, V4L2Error, apply_controls, get_capabilities
+    from .v4l2 import ControlInfo, V4L2Error, apply_controls, get_capabilities, set_format
 except ImportError:
     from config_ui import ConfigWindow, SessionConfig
-    from v4l2 import ControlInfo, V4L2Error, apply_controls, get_capabilities
+    from v4l2 import ControlInfo, V4L2Error, apply_controls, get_capabilities, set_format
 
 
 WINDOW_NAME = "Camera Preview"
@@ -66,7 +66,8 @@ def _fourcc(codec: str) -> int:
 
 def _open_capture(config: SessionConfig) -> cv2.VideoCapture:
     _validate_resolution(config)
-    capture = cv2.VideoCapture(config.device_index, cv2.CAP_V4L2)
+    set_format(config.device_path, config.pixel_format, config.resolution)
+    capture = cv2.VideoCapture(config.device_path, cv2.CAP_V4L2)
     capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     capture.set(cv2.CAP_PROP_FOURCC, _fourcc(config.pixel_format))
     if _is_raw_format(config.pixel_format):
@@ -75,6 +76,14 @@ def _open_capture(config: SessionConfig) -> cv2.VideoCapture:
     capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.resolution[1])
     if not capture.isOpened():
         raise RuntimeError(f"Could not open camera {config.device_path}.")
+    actual_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    actual_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if actual_width > 0 and actual_height > 0 and (actual_width, actual_height) != tuple(config.resolution):
+        raise RuntimeError(
+            f"Camera opened with {actual_width}x{actual_height} instead of "
+            f"{config.resolution[0]}x{config.resolution[1]}. "
+            "The Pi capture node may not have accepted the requested sensor mode."
+        )
     return capture
 
 

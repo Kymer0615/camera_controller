@@ -166,6 +166,15 @@ def get_capabilities(device_path: str) -> CameraCapabilities:
     )
 
 
+def set_format(device_path: str, pixel_format: str, resolution: tuple[int, int]) -> None:
+    width, height = resolution
+    _run_v4l2(
+        "--device",
+        device_path,
+        f"--set-fmt-video=width={width},height={height},pixelformat={pixel_format}",
+    )
+
+
 def apply_controls(device_path: str, values: dict[str, int]) -> None:
     if not values:
         return
