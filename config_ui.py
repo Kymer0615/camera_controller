@@ -54,6 +54,13 @@ class SessionConfig:
     pi_auto_exposure_enabled: bool = True
     pi_exposure_time_us: int = 10000
     pi_analogue_gain: float = 1.0
+    pi_auto_white_balance_enabled: bool = True
+    pi_red_gain: float = 1.0
+    pi_blue_gain: float = 1.0
+    pi_brightness: float = 0.0
+    pi_contrast: float = 1.0
+    pi_saturation: float = 1.0
+    pi_sharpness: float = 1.0
     headless_capture_count: int = 1
     headless_interval_seconds: float = 0.0
     headless_warmup_frames: int = 5
@@ -91,6 +98,13 @@ class ConfigWindow:
         self.pi_auto_exposure_var = tk.BooleanVar(value=True)
         self.pi_exposure_time_var = tk.StringVar(value="10000")
         self.pi_analogue_gain_var = tk.StringVar(value="1.0")
+        self.pi_auto_white_balance_var = tk.BooleanVar(value=True)
+        self.pi_red_gain_var = tk.StringVar(value="1.0")
+        self.pi_blue_gain_var = tk.StringVar(value="1.0")
+        self.pi_brightness_var = tk.StringVar(value="0.0")
+        self.pi_contrast_var = tk.StringVar(value="1.0")
+        self.pi_saturation_var = tk.StringVar(value="1.0")
+        self.pi_sharpness_var = tk.StringVar(value="1.0")
 
         self._build_layout()
         self._load_devices()
@@ -191,6 +205,38 @@ class ConfigWindow:
         ttk.Label(pi_controls, text="Analogue Gain").grid(row=1, column=0, sticky="w", pady=4)
         self.pi_analogue_gain_entry = ttk.Entry(pi_controls, textvariable=self.pi_analogue_gain_var)
         self.pi_analogue_gain_entry.grid(row=1, column=1, sticky="ew", pady=4)
+
+        self.pi_auto_white_balance_check = ttk.Checkbutton(
+            pi_controls,
+            text="Auto White Balance",
+            variable=self.pi_auto_white_balance_var,
+            command=self._sync_pi_control_state,
+        )
+        self.pi_auto_white_balance_check.grid(row=2, column=0, sticky="w", pady=4)
+
+        ttk.Label(pi_controls, text="Red Gain").grid(row=2, column=2, sticky="w", padx=(12, 8), pady=4)
+        self.pi_red_gain_entry = ttk.Entry(pi_controls, textvariable=self.pi_red_gain_var)
+        self.pi_red_gain_entry.grid(row=2, column=3, sticky="ew", pady=4)
+
+        ttk.Label(pi_controls, text="Blue Gain").grid(row=3, column=0, sticky="w", pady=4)
+        self.pi_blue_gain_entry = ttk.Entry(pi_controls, textvariable=self.pi_blue_gain_var)
+        self.pi_blue_gain_entry.grid(row=3, column=1, sticky="ew", pady=4)
+
+        ttk.Label(pi_controls, text="Brightness").grid(row=4, column=0, sticky="w", pady=4)
+        self.pi_brightness_entry = ttk.Entry(pi_controls, textvariable=self.pi_brightness_var)
+        self.pi_brightness_entry.grid(row=4, column=1, sticky="ew", pady=4)
+
+        ttk.Label(pi_controls, text="Contrast").grid(row=4, column=2, sticky="w", padx=(12, 8), pady=4)
+        self.pi_contrast_entry = ttk.Entry(pi_controls, textvariable=self.pi_contrast_var)
+        self.pi_contrast_entry.grid(row=4, column=3, sticky="ew", pady=4)
+
+        ttk.Label(pi_controls, text="Saturation").grid(row=5, column=0, sticky="w", pady=4)
+        self.pi_saturation_entry = ttk.Entry(pi_controls, textvariable=self.pi_saturation_var)
+        self.pi_saturation_entry.grid(row=5, column=1, sticky="ew", pady=4)
+
+        ttk.Label(pi_controls, text="Sharpness").grid(row=5, column=2, sticky="w", padx=(12, 8), pady=4)
+        self.pi_sharpness_entry = ttk.Entry(pi_controls, textvariable=self.pi_sharpness_var)
+        self.pi_sharpness_entry.grid(row=5, column=3, sticky="ew", pady=4)
 
         controls_frame = ttk.LabelFrame(self.root, text="Camera Controls", padding=8)
         controls_frame.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
@@ -296,15 +342,24 @@ class ConfigWindow:
         pi_state = "normal" if is_raw else "disabled"
         self.pi_auto_exposure_check.configure(state=pi_state)
         self.pi_analogue_gain_entry.configure(state=pi_state)
+        self.pi_auto_white_balance_check.configure(state=pi_state)
+        self.pi_brightness_entry.configure(state=pi_state)
+        self.pi_contrast_entry.configure(state=pi_state)
+        self.pi_saturation_entry.configure(state=pi_state)
+        self.pi_sharpness_entry.configure(state=pi_state)
         if not is_raw:
             self.raw_processing_var.set(True)
             self.pi_auto_exposure_var.set(True)
+            self.pi_auto_white_balance_var.set(True)
         self._sync_pi_control_state()
 
     def _sync_pi_control_state(self) -> None:
         is_raw = self._is_raw_format(self.format_var.get())
         exposure_state = "normal" if is_raw and not self.pi_auto_exposure_var.get() else "disabled"
+        white_balance_state = "normal" if is_raw and not self.pi_auto_white_balance_var.get() else "disabled"
         self.pi_exposure_time_entry.configure(state=exposure_state)
+        self.pi_red_gain_entry.configure(state=white_balance_state)
+        self.pi_blue_gain_entry.configure(state=white_balance_state)
 
     def _is_raw_format(self, pixel_format: str) -> bool:
         return pixel_format in RAW_FORMATS or pixel_format.startswith(RAW_FORMAT_PREFIXES)
@@ -488,6 +543,12 @@ class ConfigWindow:
         width_text, height_text = self.resolution_var.get().split("x", 1)
         exposure_time_us = int(self.pi_exposure_time_var.get())
         analogue_gain = float(self.pi_analogue_gain_var.get())
+        red_gain = float(self.pi_red_gain_var.get())
+        blue_gain = float(self.pi_blue_gain_var.get())
+        brightness = float(self.pi_brightness_var.get())
+        contrast = float(self.pi_contrast_var.get())
+        saturation = float(self.pi_saturation_var.get())
+        sharpness = float(self.pi_sharpness_var.get())
         return SessionConfig(
             device_index=device.index,
             device_path=device.path,
@@ -504,6 +565,13 @@ class ConfigWindow:
             pi_auto_exposure_enabled=bool(self.pi_auto_exposure_var.get()),
             pi_exposure_time_us=exposure_time_us,
             pi_analogue_gain=analogue_gain,
+            pi_auto_white_balance_enabled=bool(self.pi_auto_white_balance_var.get()),
+            pi_red_gain=red_gain,
+            pi_blue_gain=blue_gain,
+            pi_brightness=brightness,
+            pi_contrast=contrast,
+            pi_saturation=saturation,
+            pi_sharpness=sharpness,
             headless_capture_count=1,
             headless_interval_seconds=0.0,
             headless_warmup_frames=5,
@@ -550,5 +618,12 @@ class ConfigWindow:
         self.pi_auto_exposure_var.set(bool(data.get("pi_auto_exposure_enabled", True)))
         self.pi_exposure_time_var.set(str(data.get("pi_exposure_time_us", self.pi_exposure_time_var.get())))
         self.pi_analogue_gain_var.set(str(data.get("pi_analogue_gain", self.pi_analogue_gain_var.get())))
+        self.pi_auto_white_balance_var.set(bool(data.get("pi_auto_white_balance_enabled", True)))
+        self.pi_red_gain_var.set(str(data.get("pi_red_gain", self.pi_red_gain_var.get())))
+        self.pi_blue_gain_var.set(str(data.get("pi_blue_gain", self.pi_blue_gain_var.get())))
+        self.pi_brightness_var.set(str(data.get("pi_brightness", self.pi_brightness_var.get())))
+        self.pi_contrast_var.set(str(data.get("pi_contrast", self.pi_contrast_var.get())))
+        self.pi_saturation_var.set(str(data.get("pi_saturation", self.pi_saturation_var.get())))
+        self.pi_sharpness_var.set(str(data.get("pi_sharpness", self.pi_sharpness_var.get())))
         self._sync_pi_control_state()
         self._apply_pending_import()

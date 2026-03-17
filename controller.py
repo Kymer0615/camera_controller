@@ -288,9 +288,16 @@ def _picamera2_controls_from_config(config: SessionConfig) -> dict[str, object]:
     controls: dict[str, object] = {
         "AeEnable": bool(config.pi_auto_exposure_enabled),
         "AnalogueGain": float(config.pi_analogue_gain),
+        "AwbEnable": bool(config.pi_auto_white_balance_enabled),
+        "Brightness": float(config.pi_brightness),
+        "Contrast": float(config.pi_contrast),
+        "Saturation": float(config.pi_saturation),
+        "Sharpness": float(config.pi_sharpness),
     }
     if not config.pi_auto_exposure_enabled:
         controls["ExposureTime"] = int(config.pi_exposure_time_us)
+    if not config.pi_auto_white_balance_enabled:
+        controls["ColourGains"] = (float(config.pi_red_gain), float(config.pi_blue_gain))
     return controls
 
 
@@ -334,6 +341,13 @@ class RuntimeControlWindow:
         self.pi_auto_exposure_var = tk.BooleanVar(value=config.pi_auto_exposure_enabled)
         self.pi_exposure_time_var = tk.StringVar(value=str(config.pi_exposure_time_us))
         self.pi_analogue_gain_var = tk.StringVar(value=str(config.pi_analogue_gain))
+        self.pi_auto_white_balance_var = tk.BooleanVar(value=config.pi_auto_white_balance_enabled)
+        self.pi_red_gain_var = tk.StringVar(value=str(config.pi_red_gain))
+        self.pi_blue_gain_var = tk.StringVar(value=str(config.pi_blue_gain))
+        self.pi_brightness_var = tk.StringVar(value=str(config.pi_brightness))
+        self.pi_contrast_var = tk.StringVar(value=str(config.pi_contrast))
+        self.pi_saturation_var = tk.StringVar(value=str(config.pi_saturation))
+        self.pi_sharpness_var = tk.StringVar(value=str(config.pi_sharpness))
         self.control_vars: dict[str, tk.Variable] = {}
         self.control_widgets: list[tk.Widget] = []
 
@@ -417,6 +431,38 @@ class RuntimeControlWindow:
         self.pi_analogue_gain_entry = ttk.Entry(pi_controls, textvariable=self.pi_analogue_gain_var)
         self.pi_analogue_gain_entry.grid(row=1, column=1, sticky="ew", pady=4)
 
+        self.pi_auto_white_balance_check = ttk.Checkbutton(
+            pi_controls,
+            text="Auto White Balance",
+            variable=self.pi_auto_white_balance_var,
+            command=self._sync_pi_control_state,
+        )
+        self.pi_auto_white_balance_check.grid(row=2, column=0, sticky="w", pady=4)
+
+        ttk.Label(pi_controls, text="Red Gain").grid(row=2, column=2, sticky="w", padx=(12, 8), pady=4)
+        self.pi_red_gain_entry = ttk.Entry(pi_controls, textvariable=self.pi_red_gain_var)
+        self.pi_red_gain_entry.grid(row=2, column=3, sticky="ew", pady=4)
+
+        ttk.Label(pi_controls, text="Blue Gain").grid(row=3, column=0, sticky="w", pady=4)
+        self.pi_blue_gain_entry = ttk.Entry(pi_controls, textvariable=self.pi_blue_gain_var)
+        self.pi_blue_gain_entry.grid(row=3, column=1, sticky="ew", pady=4)
+
+        ttk.Label(pi_controls, text="Brightness").grid(row=4, column=0, sticky="w", pady=4)
+        self.pi_brightness_entry = ttk.Entry(pi_controls, textvariable=self.pi_brightness_var)
+        self.pi_brightness_entry.grid(row=4, column=1, sticky="ew", pady=4)
+
+        ttk.Label(pi_controls, text="Contrast").grid(row=4, column=2, sticky="w", padx=(12, 8), pady=4)
+        self.pi_contrast_entry = ttk.Entry(pi_controls, textvariable=self.pi_contrast_var)
+        self.pi_contrast_entry.grid(row=4, column=3, sticky="ew", pady=4)
+
+        ttk.Label(pi_controls, text="Saturation").grid(row=5, column=0, sticky="w", pady=4)
+        self.pi_saturation_entry = ttk.Entry(pi_controls, textvariable=self.pi_saturation_var)
+        self.pi_saturation_entry.grid(row=5, column=1, sticky="ew", pady=4)
+
+        ttk.Label(pi_controls, text="Sharpness").grid(row=5, column=2, sticky="w", padx=(12, 8), pady=4)
+        self.pi_sharpness_entry = ttk.Entry(pi_controls, textvariable=self.pi_sharpness_var)
+        self.pi_sharpness_entry.grid(row=5, column=3, sticky="ew", pady=4)
+
         self._sync_pi_controls_enabled()
 
         controls_frame = ttk.LabelFrame(self.root, text="Live Camera Controls", padding=8)
@@ -459,15 +505,24 @@ class RuntimeControlWindow:
         self.raw_processing_check.configure(state=state)
         self.pi_auto_exposure_check.configure(state=state)
         self.pi_analogue_gain_entry.configure(state=state)
+        self.pi_auto_white_balance_check.configure(state=state)
+        self.pi_brightness_entry.configure(state=state)
+        self.pi_contrast_entry.configure(state=state)
+        self.pi_saturation_entry.configure(state=state)
+        self.pi_sharpness_entry.configure(state=state)
         if not is_raw:
             self.raw_processing_var.set(True)
             self.pi_auto_exposure_var.set(True)
+            self.pi_auto_white_balance_var.set(True)
         self._sync_pi_control_state()
 
     def _sync_pi_control_state(self) -> None:
         is_raw = _is_raw_format(self.config.pixel_format)
-        state = "normal" if is_raw and not self.pi_auto_exposure_var.get() else "disabled"
-        self.pi_exposure_time_entry.configure(state=state)
+        exposure_state = "normal" if is_raw and not self.pi_auto_exposure_var.get() else "disabled"
+        white_balance_state = "normal" if is_raw and not self.pi_auto_white_balance_var.get() else "disabled"
+        self.pi_exposure_time_entry.configure(state=exposure_state)
+        self.pi_red_gain_entry.configure(state=white_balance_state)
+        self.pi_blue_gain_entry.configure(state=white_balance_state)
 
     def _pick_directory(self) -> None:
         selected = filedialog.askdirectory(initialdir=self.save_dir_var.get() or str(Path.cwd()))
@@ -574,6 +629,13 @@ class RuntimeControlWindow:
             pi_auto_exposure_enabled=bool(self.pi_auto_exposure_var.get()),
             pi_exposure_time_us=int(self.pi_exposure_time_var.get()),
             pi_analogue_gain=float(self.pi_analogue_gain_var.get()),
+            pi_auto_white_balance_enabled=bool(self.pi_auto_white_balance_var.get()),
+            pi_red_gain=float(self.pi_red_gain_var.get()),
+            pi_blue_gain=float(self.pi_blue_gain_var.get()),
+            pi_brightness=float(self.pi_brightness_var.get()),
+            pi_contrast=float(self.pi_contrast_var.get()),
+            pi_saturation=float(self.pi_saturation_var.get()),
+            pi_sharpness=float(self.pi_sharpness_var.get()),
             headless_capture_count=self.config.headless_capture_count,
             headless_interval_seconds=self.config.headless_interval_seconds,
             headless_warmup_frames=self.config.headless_warmup_frames,
@@ -591,6 +653,13 @@ class RuntimeControlWindow:
         self.pi_auto_exposure_var.set(config.pi_auto_exposure_enabled)
         self.pi_exposure_time_var.set(str(config.pi_exposure_time_us))
         self.pi_analogue_gain_var.set(str(config.pi_analogue_gain))
+        self.pi_auto_white_balance_var.set(config.pi_auto_white_balance_enabled)
+        self.pi_red_gain_var.set(str(config.pi_red_gain))
+        self.pi_blue_gain_var.set(str(config.pi_blue_gain))
+        self.pi_brightness_var.set(str(config.pi_brightness))
+        self.pi_contrast_var.set(str(config.pi_contrast))
+        self.pi_saturation_var.set(str(config.pi_saturation))
+        self.pi_sharpness_var.set(str(config.pi_sharpness))
         self._sync_pi_controls_enabled()
         controls = config.controls or {}
         for name, value in controls.items():
