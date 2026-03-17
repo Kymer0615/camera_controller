@@ -10,6 +10,13 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import cv2
+
+try:
+    from picamera2 import Picamera2
+except ImportError:
+    Picamera2 = None
+
 
 def _configure_qt_platform() -> None:
     if "QT_QPA_PLATFORM" in os.environ:
@@ -26,8 +33,6 @@ def _configure_qt_platform() -> None:
 
 
 _configure_qt_platform()
-
-import cv2
 
 try:
     from .config_ui import ConfigWindow, SessionConfig
@@ -58,10 +63,33 @@ BAYER_CONVERSIONS = {
     "BA16": cv2.COLOR_BAYER_GR2BGR,
     "RG16": cv2.COLOR_BAYER_RG2BGR,
 }
+PICAMERA2_RAW_FORMATS = {
+    "BA81": "SBGGR8",
+    "BGGR": "SBGGR8",
+    "GBRG": "SGBRG8",
+    "GRBG": "SGRBG8",
+    "RGGB": "SRGGB8",
+    "BG10": "SBGGR10",
+    "GB10": "SGBRG10",
+    "BA10": "SGRBG10",
+    "RG10": "SRGGB10",
+    "BG12": "SBGGR12",
+    "GB12": "SGBRG12",
+    "BA12": "SGRBG12",
+    "RG12": "SRGGB12",
+    "BG14": "SBGGR14",
+    "GB14": "SGBRG14",
+    "GR14": "SGRBG14",
+    "RG14": "SRGGB14",
+}
 
 
 def _fourcc(codec: str) -> int:
     return cv2.VideoWriter_fourcc(*codec)
+
+
+def _using_picamera2(config: SessionConfig) -> bool:
+    return bool(Picamera2 is not None and _is_raw_format(config.pixel_format))
 
 
 def _open_capture(config: SessionConfig) -> cv2.VideoCapture:
@@ -95,6 +123,37 @@ def _validate_resolution(config: SessionConfig) -> None:
             "This Pi camera node is likely exposing an unconfigured stepwise range. "
             "Enter the real sensor mode manually, for example 1456x1088 for the global shutter camera."
         )
+
+
+def _picamera2_raw_format(pixel_format: str) -> str:
+    if pixel_format not in PICAMERA2_RAW_FORMATS:
+        raise ValueError(f"Pixel format {pixel_format} is not supported by the Picamera2 raw backend.")
+    return PICAMERA2_RAW_FORMATS[pixel_format]
+
+
+def _raw_bit_depth(pixel_format: str) -> int:
+    for size in (16, 14, 12, 10):
+        if str(size) in pixel_format:
+            return size
+    return 8
+
+
+def _normalize_main_frame(frame):
+    if frame is None:
+        raise RuntimeError("Camera returned an empty processed frame.")
+    if frame.ndim == 3 and frame.shape[2] == 4:
+        return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+    return frame
+
+
+def _crop_raw_frame(frame, width: int, height: int):
+    if frame is None:
+        raise RuntimeError("Camera returned an empty raw frame.")
+    if frame.ndim == 2:
+        return frame[:height, :width]
+    if frame.ndim == 3 and frame.shape[2] == 1:
+        return frame[:height, :width, 0]
+    return frame[:height, :width]
 
 
 def _is_raw_format(pixel_format: str) -> bool:
@@ -142,6 +201,43 @@ def _processing_label(pixel_format: str, raw_processing_enabled: bool) -> str:
     if not _is_raw_format(pixel_format):
         return "standard"
     return "basic" if raw_processing_enabled else "raw"
+
+
+class Picamera2CaptureBackend:
+    def __init__(self, config: SessionConfig) -> None:
+        if Picamera2 is None:
+            raise RuntimeError("Picamera2 is not available.")
+        self.config = config
+        self.camera = Picamera2()
+        self._configure()
+        self.camera.start()
+        time.sleep(0.2)
+
+    def _configure(self) -> None:
+        raw_format = _picamera2_raw_format(self.config.pixel_format)
+        configuration = self.camera.create_preview_configuration(
+            main={"size": self.config.resolution},
+            raw={"size": self.config.resolution, "format": raw_format},
+            sensor={
+                "output_size": self.config.resolution,
+                "bit_depth": _raw_bit_depth(self.config.pixel_format),
+            },
+            buffer_count=3,
+        )
+        self.camera.configure(configuration)
+
+    def read(self):
+        return _normalize_main_frame(self.camera.capture_array("main"))
+
+    def capture_for_save(self):
+        if self.config.raw_processing_enabled:
+            return self.read()
+        raw_frame = self.camera.capture_array("raw")
+        return _crop_raw_frame(raw_frame, self.config.resolution[0], self.config.resolution[1])
+
+    def release(self) -> None:
+        self.camera.stop()
+        self.camera.close()
 
 
 def _save_session_metadata(config: SessionConfig, session_dir: Path) -> None:
@@ -484,7 +580,7 @@ def run_preview(config: SessionConfig) -> None:
     if config.controls:
         apply_controls(config.device_path, config.controls)
 
-    capture = _open_capture(config)
+    capture = Picamera2CaptureBackend(config) if _using_picamera2(config) else _open_capture(config)
     runtime_window = RuntimeControlWindow(config, lambda updated: _save_session_metadata(updated, _session_dir(updated)))
 
     zoom = max(config.initial_zoom, 0.1)
@@ -499,10 +595,14 @@ def run_preview(config: SessionConfig) -> None:
             zoom = runtime_window.current_zoom()
             session_dir = _session_dir(config)
 
-            ok, frame = capture.read()
-            if not ok:
-                raise RuntimeError("Failed to read a frame from the camera.")
-            preview_frame, save_frame = _prepare_frame(frame, config.pixel_format, config.raw_processing_enabled)
+            if _using_picamera2(config):
+                preview_frame = capture.read()
+                save_frame = preview_frame if config.raw_processing_enabled else None
+            else:
+                ok, frame = capture.read()
+                if not ok:
+                    raise RuntimeError("Failed to read a frame from the camera.")
+                preview_frame, save_frame = _prepare_frame(frame, config.pixel_format, config.raw_processing_enabled)
             if not window_initialized:
                 cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
                 cv2.resizeWindow(WINDOW_NAME, config.preview_width, config.preview_height)
@@ -536,6 +636,8 @@ def run_preview(config: SessionConfig) -> None:
             elif key == ord("c"):
                 _save_session_metadata(config, session_dir)
                 path = _capture_path(config, session_dir, frame_counter)
+                if _using_picamera2(config):
+                    save_frame = capture.capture_for_save()
                 if _write_frame(
                     path,
                     preview_frame,
@@ -588,20 +690,27 @@ def run_headless(
     if warmup < 0:
         raise ValueError("Headless warmup frames cannot be negative.")
 
-    capture = _open_capture(config)
+    capture = Picamera2CaptureBackend(config) if _using_picamera2(config) else _open_capture(config)
     saved_images: list[Path] = []
 
     try:
-        for _ in range(warmup):
-            ok, _frame = capture.read()
-            if not ok:
-                raise RuntimeError("Failed to read a warmup frame from the camera.")
+        if _using_picamera2(config):
+            time.sleep(max(warmup, 1) * 0.05)
+        else:
+            for _ in range(warmup):
+                ok, _frame = capture.read()
+                if not ok:
+                    raise RuntimeError("Failed to read a warmup frame from the camera.")
 
         for frame_counter in range(total_captures):
-            ok, frame = capture.read()
-            if not ok:
-                raise RuntimeError("Failed to read a frame from the camera.")
-            preview_frame, save_frame = _prepare_frame(frame, config.pixel_format, config.raw_processing_enabled)
+            if _using_picamera2(config):
+                preview_frame = capture.read()
+                save_frame = capture.capture_for_save()
+            else:
+                ok, frame = capture.read()
+                if not ok:
+                    raise RuntimeError("Failed to read a frame from the camera.")
+                preview_frame, save_frame = _prepare_frame(frame, config.pixel_format, config.raw_processing_enabled)
 
             path = _capture_path(config, session_dir, frame_counter)
             if not _write_frame(
