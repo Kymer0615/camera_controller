@@ -4,10 +4,28 @@ import argparse
 from dataclasses import asdict
 from datetime import datetime
 import json
+import os
 from pathlib import Path
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+
+
+def _configure_qt_platform() -> None:
+    if "QT_QPA_PLATFORM" in os.environ:
+        return
+
+    session_type = os.environ.get("XDG_SESSION_TYPE", "").lower()
+    has_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
+    has_x11 = bool(os.environ.get("DISPLAY"))
+
+    if session_type == "wayland" and has_wayland:
+        os.environ["QT_QPA_PLATFORM"] = "wayland"
+    elif session_type == "x11" or has_x11:
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+
+
+_configure_qt_platform()
 
 import cv2
 
