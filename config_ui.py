@@ -206,8 +206,12 @@ class ConfigWindow:
         resolutions = self.capabilities.formats.get(self.format_var.get(), [])
         labels = [f"{width}x{height}" for width, height in resolutions]
         self.resolution_combo["values"] = labels
-        if labels and self.resolution_var.get() not in labels:
-            self.resolution_var.set(labels[0])
+        if labels:
+            self.resolution_combo.configure(state="readonly")
+            if self.resolution_var.get() not in labels:
+                self.resolution_var.set(labels[0])
+        else:
+            self.resolution_combo.configure(state="normal")
         self._sync_processing_toggle()
 
     def _selected_device(self) -> CameraDevice | None:

@@ -79,6 +79,9 @@ def list_formats(device_path: str) -> dict[str, list[tuple[int, int]]]:
     current_format: str | None = None
     format_pattern = re.compile(r"\[\d+\]: '([^']+)'")
     size_pattern = re.compile(r"Size:\s+Discrete\s+(\d+)x(\d+)")
+    stepwise_pattern = re.compile(
+        r"Size:\s+Stepwise\s+(\d+)x(\d+)\s*-\s*(\d+)x(\d+)\s+with step\s+(\d+)/(\d+)"
+    )
     for raw_line in output.splitlines():
         line = raw_line.strip()
         format_match = format_pattern.search(line)
@@ -91,6 +94,16 @@ def list_formats(device_path: str) -> dict[str, list[tuple[int, int]]]:
             size = (int(size_match.group(1)), int(size_match.group(2)))
             if size not in formats[current_format]:
                 formats[current_format].append(size)
+            continue
+        stepwise_match = stepwise_pattern.search(line)
+        if stepwise_match and current_format:
+            min_width = int(stepwise_match.group(1))
+            min_height = int(stepwise_match.group(2))
+            max_width = int(stepwise_match.group(3))
+            max_height = int(stepwise_match.group(4))
+            for size in ((max_width, max_height), (min_width, min_height)):
+                if size not in formats[current_format]:
+                    formats[current_format].append(size)
     return formats
 
 
