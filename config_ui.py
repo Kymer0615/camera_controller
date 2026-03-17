@@ -49,6 +49,7 @@ class SessionConfig:
     initial_zoom: float = 1.0
     preview_width: int = 1280
     preview_height: int = 720
+    preview_resolution: tuple[int, int] | None = None
     raw_processing_enabled: bool = True
     pi_auto_exposure_enabled: bool = True
     pi_exposure_time_us: int = 10000
@@ -85,6 +86,7 @@ class ConfigWindow:
         self.zoom_var = tk.StringVar(value="1.0")
         self.preview_width_var = tk.StringVar(value="1280")
         self.preview_height_var = tk.StringVar(value="720")
+        self.preview_resolution_var = tk.StringVar(value="728x544")
         self.raw_processing_var = tk.BooleanVar(value=True)
         self.pi_auto_exposure_var = tk.BooleanVar(value=True)
         self.pi_exposure_time_var = tk.StringVar(value="10000")
@@ -153,15 +155,23 @@ class ConfigWindow:
         ttk.Entry(preview_size, textvariable=self.preview_width_var, width=10).grid(row=0, column=0, sticky="ew")
         ttk.Entry(preview_size, textvariable=self.preview_height_var, width=10).grid(row=0, column=1, sticky="ew", padx=(8, 0))
 
+        ttk.Label(top, text="Preview Stream").grid(row=5, column=0, sticky="w", padx=(0, 8), pady=6)
+        self.preview_resolution_combo = ttk.Combobox(
+            top,
+            textvariable=self.preview_resolution_var,
+            values=("728x544", "640x480", "800x600", "1280x720", "1456x1088"),
+        )
+        self.preview_resolution_combo.grid(row=5, column=1, sticky="ew", pady=6)
+
         self.raw_processing_check = ttk.Checkbutton(
             top,
             text="Basic raw processing (normalize + demosaic)",
             variable=self.raw_processing_var,
         )
-        self.raw_processing_check.grid(row=5, column=0, columnspan=4, sticky="w", pady=6)
+        self.raw_processing_check.grid(row=6, column=0, columnspan=4, sticky="w", pady=6)
 
         pi_controls = ttk.LabelFrame(top, text="Pi Raw Controls", padding=8)
-        pi_controls.grid(row=6, column=0, columnspan=4, sticky="ew", pady=6)
+        pi_controls.grid(row=7, column=0, columnspan=4, sticky="ew", pady=6)
         pi_controls.columnconfigure(1, weight=1)
         pi_controls.columnconfigure(3, weight=1)
         self.pi_controls_frame = pi_controls
@@ -489,6 +499,7 @@ class ConfigWindow:
             initial_zoom=float(self.zoom_var.get()),
             preview_width=int(self.preview_width_var.get()),
             preview_height=int(self.preview_height_var.get()),
+            preview_resolution=tuple(int(part) for part in self.preview_resolution_var.get().split("x", 1)),
             raw_processing_enabled=bool(self.raw_processing_var.get()),
             pi_auto_exposure_enabled=bool(self.pi_auto_exposure_var.get()),
             pi_exposure_time_us=exposure_time_us,
@@ -532,6 +543,9 @@ class ConfigWindow:
         self.zoom_var.set(str(data.get("initial_zoom", self.zoom_var.get())))
         self.preview_width_var.set(str(data.get("preview_width", self.preview_width_var.get())))
         self.preview_height_var.set(str(data.get("preview_height", self.preview_height_var.get())))
+        preview_resolution = data.get("preview_resolution")
+        if preview_resolution and len(preview_resolution) == 2:
+            self.preview_resolution_var.set(f"{int(preview_resolution[0])}x{int(preview_resolution[1])}")
         self.raw_processing_var.set(bool(data.get("raw_processing_enabled", True)))
         self.pi_auto_exposure_var.set(bool(data.get("pi_auto_exposure_enabled", True)))
         self.pi_exposure_time_var.set(str(data.get("pi_exposure_time_us", self.pi_exposure_time_var.get())))

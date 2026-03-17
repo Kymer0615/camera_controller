@@ -215,8 +215,9 @@ class Picamera2CaptureBackend:
 
     def _configure(self) -> None:
         raw_format = _picamera2_raw_format(self.config.pixel_format)
+        preview_resolution = self.config.preview_resolution or self.config.resolution
         configuration = self.camera.create_preview_configuration(
-            main={"size": self.config.resolution, "format": "RGB888"},
+            main={"size": preview_resolution, "format": "RGB888"},
             raw={"size": self.config.resolution, "format": raw_format},
             sensor={
                 "output_size": self.config.resolution,
@@ -327,6 +328,8 @@ class RuntimeControlWindow:
         self.prefix_var = tk.StringVar(value=config.file_prefix)
         self.extension_var = tk.StringVar(value=config.image_extension)
         self.zoom_var = tk.StringVar(value=str(config.initial_zoom))
+        preview_resolution = config.preview_resolution or config.resolution
+        self.preview_resolution_var = tk.StringVar(value=f"{preview_resolution[0]}x{preview_resolution[1]}")
         self.raw_processing_var = tk.BooleanVar(value=config.raw_processing_enabled)
         self.pi_auto_exposure_var = tk.BooleanVar(value=config.pi_auto_exposure_enabled)
         self.pi_exposure_time_var = tk.StringVar(value=str(config.pi_exposure_time_us))
@@ -377,15 +380,23 @@ class RuntimeControlWindow:
         ttk.Label(top, text="Preview Zoom").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=6)
         ttk.Entry(top, textvariable=self.zoom_var).grid(row=4, column=1, sticky="ew", pady=6)
 
+        ttk.Label(top, text="Preview Stream").grid(row=4, column=2, sticky="w", padx=(8, 8), pady=6)
+        self.preview_resolution_combo = ttk.Combobox(
+            top,
+            textvariable=self.preview_resolution_var,
+            values=("728x544", "640x480", "800x600", "1280x720", "1456x1088"),
+        )
+        self.preview_resolution_combo.grid(row=4, column=3, sticky="ew", pady=6)
+
         self.raw_processing_check = ttk.Checkbutton(
             top,
             text="Basic raw processing (normalize + demosaic)",
             variable=self.raw_processing_var,
         )
-        self.raw_processing_check.grid(row=4, column=2, columnspan=2, sticky="w", pady=6)
+        self.raw_processing_check.grid(row=5, column=0, columnspan=4, sticky="w", pady=6)
 
         pi_controls = ttk.LabelFrame(top, text="Pi Raw Controls", padding=8)
-        pi_controls.grid(row=5, column=0, columnspan=4, sticky="ew", pady=6)
+        pi_controls.grid(row=6, column=0, columnspan=4, sticky="ew", pady=6)
         pi_controls.columnconfigure(1, weight=1)
         pi_controls.columnconfigure(3, weight=1)
         self.pi_controls_frame = pi_controls
@@ -558,6 +569,7 @@ class RuntimeControlWindow:
             initial_zoom=zoom,
             preview_width=self.config.preview_width,
             preview_height=self.config.preview_height,
+            preview_resolution=tuple(int(part) for part in self.preview_resolution_var.get().split("x", 1)),
             raw_processing_enabled=bool(self.raw_processing_var.get()),
             pi_auto_exposure_enabled=bool(self.pi_auto_exposure_var.get()),
             pi_exposure_time_us=int(self.pi_exposure_time_var.get()),
@@ -573,6 +585,8 @@ class RuntimeControlWindow:
         self.prefix_var.set(config.file_prefix)
         self.extension_var.set(config.image_extension)
         self.zoom_var.set(str(config.initial_zoom))
+        preview_resolution = config.preview_resolution or config.resolution
+        self.preview_resolution_var.set(f"{preview_resolution[0]}x{preview_resolution[1]}")
         self.raw_processing_var.set(config.raw_processing_enabled)
         self.pi_auto_exposure_var.set(config.pi_auto_exposure_enabled)
         self.pi_exposure_time_var.set(str(config.pi_exposure_time_us))
@@ -664,6 +678,8 @@ class RuntimeControlWindow:
                 raise ValueError("Runtime load cannot change pixel format during an active preview.")
             if tuple(loaded.resolution) != tuple(self.config.resolution):
                 raise ValueError("Runtime load cannot change resolution during an active preview.")
+            if tuple(loaded.preview_resolution or loaded.resolution) != tuple(self.config.preview_resolution or self.config.resolution):
+                raise ValueError("Runtime load cannot change preview stream resolution during an active preview.")
             self._populate_from_config(loaded)
             self.apply_current_settings()
             self.status_var.set(f"Loaded config from {path}")
