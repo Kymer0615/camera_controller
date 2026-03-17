@@ -50,6 +50,9 @@ class SessionConfig:
     preview_width: int = 1280
     preview_height: int = 720
     raw_processing_enabled: bool = True
+    pi_auto_exposure_enabled: bool = True
+    pi_exposure_time_us: int = 10000
+    pi_analogue_gain: float = 1.0
     headless_capture_count: int = 1
     headless_interval_seconds: float = 0.0
     headless_warmup_frames: int = 5
@@ -83,6 +86,9 @@ class ConfigWindow:
         self.preview_width_var = tk.StringVar(value="1280")
         self.preview_height_var = tk.StringVar(value="720")
         self.raw_processing_var = tk.BooleanVar(value=True)
+        self.pi_auto_exposure_var = tk.BooleanVar(value=True)
+        self.pi_exposure_time_var = tk.StringVar(value="10000")
+        self.pi_analogue_gain_var = tk.StringVar(value="1.0")
 
         self._build_layout()
         self._load_devices()
@@ -153,6 +159,28 @@ class ConfigWindow:
             variable=self.raw_processing_var,
         )
         self.raw_processing_check.grid(row=5, column=0, columnspan=4, sticky="w", pady=6)
+
+        pi_controls = ttk.LabelFrame(top, text="Pi Raw Controls", padding=8)
+        pi_controls.grid(row=6, column=0, columnspan=4, sticky="ew", pady=6)
+        pi_controls.columnconfigure(1, weight=1)
+        pi_controls.columnconfigure(3, weight=1)
+        self.pi_controls_frame = pi_controls
+
+        self.pi_auto_exposure_check = ttk.Checkbutton(
+            pi_controls,
+            text="Auto Exposure",
+            variable=self.pi_auto_exposure_var,
+            command=self._sync_pi_control_state,
+        )
+        self.pi_auto_exposure_check.grid(row=0, column=0, sticky="w", pady=4)
+
+        ttk.Label(pi_controls, text="Exposure Time (us)").grid(row=0, column=2, sticky="w", padx=(12, 8), pady=4)
+        self.pi_exposure_time_entry = ttk.Entry(pi_controls, textvariable=self.pi_exposure_time_var)
+        self.pi_exposure_time_entry.grid(row=0, column=3, sticky="ew", pady=4)
+
+        ttk.Label(pi_controls, text="Analogue Gain").grid(row=1, column=0, sticky="w", pady=4)
+        self.pi_analogue_gain_entry = ttk.Entry(pi_controls, textvariable=self.pi_analogue_gain_var)
+        self.pi_analogue_gain_entry.grid(row=1, column=1, sticky="ew", pady=4)
 
         controls_frame = ttk.LabelFrame(self.root, text="Camera Controls", padding=8)
         controls_frame.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
@@ -255,8 +283,18 @@ class ConfigWindow:
         is_raw = self._is_raw_format(self.format_var.get())
         state = "normal" if is_raw else "disabled"
         self.raw_processing_check.configure(state=state)
+        pi_state = "normal" if is_raw else "disabled"
+        self.pi_auto_exposure_check.configure(state=pi_state)
+        self.pi_analogue_gain_entry.configure(state=pi_state)
         if not is_raw:
             self.raw_processing_var.set(True)
+            self.pi_auto_exposure_var.set(True)
+        self._sync_pi_control_state()
+
+    def _sync_pi_control_state(self) -> None:
+        is_raw = self._is_raw_format(self.format_var.get())
+        exposure_state = "normal" if is_raw and not self.pi_auto_exposure_var.get() else "disabled"
+        self.pi_exposure_time_entry.configure(state=exposure_state)
 
     def _is_raw_format(self, pixel_format: str) -> bool:
         return pixel_format in RAW_FORMATS or pixel_format.startswith(RAW_FORMAT_PREFIXES)
@@ -438,6 +476,8 @@ class ConfigWindow:
         if "x" not in self.resolution_var.get():
             raise ValueError("Choose a resolution.")
         width_text, height_text = self.resolution_var.get().split("x", 1)
+        exposure_time_us = int(self.pi_exposure_time_var.get())
+        analogue_gain = float(self.pi_analogue_gain_var.get())
         return SessionConfig(
             device_index=device.index,
             device_path=device.path,
@@ -450,6 +490,9 @@ class ConfigWindow:
             preview_width=int(self.preview_width_var.get()),
             preview_height=int(self.preview_height_var.get()),
             raw_processing_enabled=bool(self.raw_processing_var.get()),
+            pi_auto_exposure_enabled=bool(self.pi_auto_exposure_var.get()),
+            pi_exposure_time_us=exposure_time_us,
+            pi_analogue_gain=analogue_gain,
             headless_capture_count=1,
             headless_interval_seconds=0.0,
             headless_warmup_frames=5,
@@ -490,4 +533,8 @@ class ConfigWindow:
         self.preview_width_var.set(str(data.get("preview_width", self.preview_width_var.get())))
         self.preview_height_var.set(str(data.get("preview_height", self.preview_height_var.get())))
         self.raw_processing_var.set(bool(data.get("raw_processing_enabled", True)))
+        self.pi_auto_exposure_var.set(bool(data.get("pi_auto_exposure_enabled", True)))
+        self.pi_exposure_time_var.set(str(data.get("pi_exposure_time_us", self.pi_exposure_time_var.get())))
+        self.pi_analogue_gain_var.set(str(data.get("pi_analogue_gain", self.pi_analogue_gain_var.get())))
+        self._sync_pi_control_state()
         self._apply_pending_import()

@@ -231,6 +231,12 @@ class Picamera2CaptureBackend:
         if controls:
             self.camera.set_controls(controls)
 
+    def apply_session_config(self, config: SessionConfig) -> None:
+        self.config = config
+        controls = _picamera2_controls_from_config(config)
+        if controls:
+            self.camera.set_controls(controls)
+
     def read(self):
         return _normalize_main_frame(self.camera.capture_array("main"))
 
@@ -256,6 +262,16 @@ def _picamera2_controls_from_v4l2(values: dict[str, int]) -> dict[str, object]:
     if auto_exposure is not None and exposure_time is None:
         controls["AeEnable"] = bool(int(auto_exposure) != 1)
 
+    return controls
+
+
+def _picamera2_controls_from_config(config: SessionConfig) -> dict[str, object]:
+    controls: dict[str, object] = {
+        "AeEnable": bool(config.pi_auto_exposure_enabled),
+        "AnalogueGain": float(config.pi_analogue_gain),
+    }
+    if not config.pi_auto_exposure_enabled:
+        controls["ExposureTime"] = int(config.pi_exposure_time_us)
     return controls
 
 
@@ -294,6 +310,9 @@ class RuntimeControlWindow:
         self.extension_var = tk.StringVar(value=config.image_extension)
         self.zoom_var = tk.StringVar(value=str(config.initial_zoom))
         self.raw_processing_var = tk.BooleanVar(value=config.raw_processing_enabled)
+        self.pi_auto_exposure_var = tk.BooleanVar(value=config.pi_auto_exposure_enabled)
+        self.pi_exposure_time_var = tk.StringVar(value=str(config.pi_exposure_time_us))
+        self.pi_analogue_gain_var = tk.StringVar(value=str(config.pi_analogue_gain))
         self.control_vars: dict[str, tk.Variable] = {}
         self.control_widgets: list[tk.Widget] = []
 
@@ -346,8 +365,30 @@ class RuntimeControlWindow:
             variable=self.raw_processing_var,
         )
         self.raw_processing_check.grid(row=4, column=2, columnspan=2, sticky="w", pady=6)
-        if not _is_raw_format(self.config.pixel_format):
-            self.raw_processing_check.configure(state="disabled")
+
+        pi_controls = ttk.LabelFrame(top, text="Pi Raw Controls", padding=8)
+        pi_controls.grid(row=5, column=0, columnspan=4, sticky="ew", pady=6)
+        pi_controls.columnconfigure(1, weight=1)
+        pi_controls.columnconfigure(3, weight=1)
+        self.pi_controls_frame = pi_controls
+
+        self.pi_auto_exposure_check = ttk.Checkbutton(
+            pi_controls,
+            text="Auto Exposure",
+            variable=self.pi_auto_exposure_var,
+            command=self._sync_pi_control_state,
+        )
+        self.pi_auto_exposure_check.grid(row=0, column=0, sticky="w", pady=4)
+
+        ttk.Label(pi_controls, text="Exposure Time (us)").grid(row=0, column=2, sticky="w", padx=(12, 8), pady=4)
+        self.pi_exposure_time_entry = ttk.Entry(pi_controls, textvariable=self.pi_exposure_time_var)
+        self.pi_exposure_time_entry.grid(row=0, column=3, sticky="ew", pady=4)
+
+        ttk.Label(pi_controls, text="Analogue Gain").grid(row=1, column=0, sticky="w", pady=4)
+        self.pi_analogue_gain_entry = ttk.Entry(pi_controls, textvariable=self.pi_analogue_gain_var)
+        self.pi_analogue_gain_entry.grid(row=1, column=1, sticky="ew", pady=4)
+
+        self._sync_pi_controls_enabled()
 
         controls_frame = ttk.LabelFrame(self.root, text="Live Camera Controls", padding=8)
         controls_frame.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
@@ -382,6 +423,22 @@ class RuntimeControlWindow:
 
     def _on_canvas_resize(self, event: tk.Event) -> None:
         self.canvas.itemconfigure(self.canvas_window, width=event.width)
+
+    def _sync_pi_controls_enabled(self) -> None:
+        is_raw = _is_raw_format(self.config.pixel_format)
+        state = "normal" if is_raw else "disabled"
+        self.raw_processing_check.configure(state=state)
+        self.pi_auto_exposure_check.configure(state=state)
+        self.pi_analogue_gain_entry.configure(state=state)
+        if not is_raw:
+            self.raw_processing_var.set(True)
+            self.pi_auto_exposure_var.set(True)
+        self._sync_pi_control_state()
+
+    def _sync_pi_control_state(self) -> None:
+        is_raw = _is_raw_format(self.config.pixel_format)
+        state = "normal" if is_raw and not self.pi_auto_exposure_var.get() else "disabled"
+        self.pi_exposure_time_entry.configure(state=state)
 
     def _pick_directory(self) -> None:
         selected = filedialog.askdirectory(initialdir=self.save_dir_var.get() or str(Path.cwd()))
@@ -484,6 +541,9 @@ class RuntimeControlWindow:
             preview_width=self.config.preview_width,
             preview_height=self.config.preview_height,
             raw_processing_enabled=bool(self.raw_processing_var.get()),
+            pi_auto_exposure_enabled=bool(self.pi_auto_exposure_var.get()),
+            pi_exposure_time_us=int(self.pi_exposure_time_var.get()),
+            pi_analogue_gain=float(self.pi_analogue_gain_var.get()),
             headless_capture_count=self.config.headless_capture_count,
             headless_interval_seconds=self.config.headless_interval_seconds,
             headless_warmup_frames=self.config.headless_warmup_frames,
@@ -496,6 +556,10 @@ class RuntimeControlWindow:
         self.extension_var.set(config.image_extension)
         self.zoom_var.set(str(config.initial_zoom))
         self.raw_processing_var.set(config.raw_processing_enabled)
+        self.pi_auto_exposure_var.set(config.pi_auto_exposure_enabled)
+        self.pi_exposure_time_var.set(str(config.pi_exposure_time_us))
+        self.pi_analogue_gain_var.set(str(config.pi_analogue_gain))
+        self._sync_pi_controls_enabled()
         controls = config.controls or {}
         for name, value in controls.items():
             control = self.capabilities.controls.get(name)
@@ -603,13 +667,15 @@ def run_preview(config: SessionConfig) -> None:
     capture = Picamera2CaptureBackend(config) if _using_picamera2(config) else _open_capture(config)
     if config.controls:
         if _using_picamera2(config):
-            capture.apply_controls(config.controls)
+            capture.apply_session_config(config)
         else:
             apply_controls(config.device_path, config.controls)
+    elif _using_picamera2(config):
+        capture.apply_session_config(config)
 
     def _apply_live_settings(updated: SessionConfig) -> None:
         if _using_picamera2(updated):
-            capture.apply_controls(updated.controls or {})
+            capture.apply_session_config(updated)
         else:
             apply_controls(updated.device_path, updated.controls or {})
 
@@ -726,9 +792,11 @@ def run_headless(
     capture = Picamera2CaptureBackend(config) if _using_picamera2(config) else _open_capture(config)
     if config.controls:
         if _using_picamera2(config):
-            capture.apply_controls(config.controls)
+            capture.apply_session_config(config)
         else:
             apply_controls(config.device_path, config.controls)
+    elif _using_picamera2(config):
+        capture.apply_session_config(config)
     saved_images: list[Path] = []
 
     try:
