@@ -251,6 +251,24 @@ class Picamera2CaptureBackend:
         self.camera.close()
 
 
+class FrameRateTracker:
+    def __init__(self) -> None:
+        self.last_timestamp = time.perf_counter()
+        self.fps = 0.0
+
+    def tick(self) -> float:
+        now = time.perf_counter()
+        delta = now - self.last_timestamp
+        self.last_timestamp = now
+        if delta > 0:
+            instant_fps = 1.0 / delta
+            if self.fps <= 0:
+                self.fps = instant_fps
+            else:
+                self.fps = (self.fps * 0.85) + (instant_fps * 0.15)
+        return self.fps
+
+
 def _picamera2_controls_from_v4l2(values: dict[str, int]) -> dict[str, object]:
     controls: dict[str, object] = {}
     exposure_time = values.get("exposure_time_absolute")
@@ -690,6 +708,7 @@ def run_preview(config: SessionConfig) -> None:
     frame_counter = 0
     saved_images: list[Path] = []
     window_initialized = False
+    fps_tracker = FrameRateTracker()
 
     try:
         while True:
@@ -711,6 +730,7 @@ def run_preview(config: SessionConfig) -> None:
                 window_initialized = True
 
             display = _scale_frame(preview_frame, zoom)
+            fps = fps_tracker.tick()
             overlay = _add_overlay(
                 display,
                 zoom,
@@ -720,6 +740,7 @@ def run_preview(config: SessionConfig) -> None:
                 len(saved_images),
                 config.pixel_format,
                 config.raw_processing_enabled,
+                fps,
             )
             cv2.imshow(WINDOW_NAME, overlay)
 
@@ -856,41 +877,46 @@ def _add_overlay(
     save_count: int,
     pixel_format: str,
     raw_processing_enabled: bool,
+    fps: float,
 ):
     overlay = frame.copy()
     lines = [
         f"Resolution: {width}x{height}",
         f"Format: {pixel_format}",
         f"Processing: {_processing_label(pixel_format, raw_processing_enabled)}",
+        f"FPS: {fps:.1f}",
         f"Zoom: {zoom:.2f}x",
         f"Saved: {save_count}",
         f"Folder: {output_dir}",
         "Keys: c capture | d delete last | +/- zoom | 0 reset | f fullscreen | h help | q quit",
         "Runtime controls window: adjust live parameters and save/load configs",
     ]
-    y = 28
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.7
+    thickness = 1
+    line_height = 28
+    x = 16
+    y = 32
+    text_width = 0
+    for line in lines:
+        (line_width, _line_height), _baseline = cv2.getTextSize(line, font, font_scale, thickness)
+        text_width = max(text_width, line_width)
+    panel_width = min(text_width + 24, frame.shape[1] - 16)
+    panel_height = min((line_height * len(lines)) + 18, frame.shape[0] - 16)
+    cv2.rectangle(overlay, (8, 8), (8 + panel_width, 8 + panel_height), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, overlay)
     for line in lines:
         cv2.putText(
             overlay,
             line,
-            (12, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
+            (x, y),
+            font,
+            font_scale,
             (255, 255, 255),
-            2,
+            thickness,
             cv2.LINE_AA,
         )
-        cv2.putText(
-            overlay,
-            line,
-            (12, y),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 0, 0),
-            1,
-            cv2.LINE_AA,
-        )
-        y += 28
+        y += line_height
     return overlay
 
 
