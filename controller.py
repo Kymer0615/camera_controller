@@ -142,7 +142,7 @@ def _normalize_main_frame(frame):
     if frame is None:
         raise RuntimeError("Camera returned an empty processed frame.")
     if frame.ndim == 3 and frame.shape[2] == 4:
-        return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        return cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
     return frame
 
 
@@ -216,7 +216,7 @@ class Picamera2CaptureBackend:
     def _configure(self) -> None:
         raw_format = _picamera2_raw_format(self.config.pixel_format)
         configuration = self.camera.create_preview_configuration(
-            main={"size": self.config.resolution},
+            main={"size": self.config.resolution, "format": "RGB888"},
             raw={"size": self.config.resolution, "format": raw_format},
             sensor={
                 "output_size": self.config.resolution,
@@ -225,6 +225,11 @@ class Picamera2CaptureBackend:
             buffer_count=3,
         )
         self.camera.configure(configuration)
+
+    def apply_controls(self, values: dict[str, int]) -> None:
+        controls = _picamera2_controls_from_v4l2(values)
+        if controls:
+            self.camera.set_controls(controls)
 
     def read(self):
         return _normalize_main_frame(self.camera.capture_array("main"))
@@ -238,6 +243,20 @@ class Picamera2CaptureBackend:
     def release(self) -> None:
         self.camera.stop()
         self.camera.close()
+
+
+def _picamera2_controls_from_v4l2(values: dict[str, int]) -> dict[str, object]:
+    controls: dict[str, object] = {}
+    exposure_time = values.get("exposure_time_absolute")
+    if exposure_time is not None and exposure_time > 0:
+        controls["AeEnable"] = False
+        controls["ExposureTime"] = int(exposure_time)
+
+    auto_exposure = values.get("auto_exposure")
+    if auto_exposure is not None and exposure_time is None:
+        controls["AeEnable"] = bool(int(auto_exposure) != 1)
+
+    return controls
 
 
 def _save_session_metadata(config: SessionConfig, session_dir: Path) -> None:
@@ -257,9 +276,10 @@ def _session_dir(config: SessionConfig) -> Path:
 
 
 class RuntimeControlWindow:
-    def __init__(self, config: SessionConfig, on_config_changed) -> None:
+    def __init__(self, config: SessionConfig, on_config_changed, apply_live_controls=None) -> None:
         self.config = config
         self.on_config_changed = on_config_changed
+        self.apply_live_controls = apply_live_controls
         self.capabilities = get_capabilities(config.device_path)
         self.root = tk.Tk()
         self.root.title(RUNTIME_WINDOW_NAME)
@@ -515,7 +535,10 @@ class RuntimeControlWindow:
     def apply_current_settings(self) -> None:
         try:
             updated = self._build_runtime_config()
-            apply_controls(updated.device_path, updated.controls or {})
+            if self.apply_live_controls is not None:
+                self.apply_live_controls(updated)
+            else:
+                apply_controls(updated.device_path, updated.controls or {})
             self.config.save_directory = updated.save_directory
             self.config.file_prefix = updated.file_prefix
             self.config.image_extension = updated.image_extension
@@ -577,11 +600,24 @@ def run_preview(config: SessionConfig) -> None:
     session_dir = _session_dir(config)
     _save_session_metadata(config, session_dir)
 
-    if config.controls:
-        apply_controls(config.device_path, config.controls)
-
     capture = Picamera2CaptureBackend(config) if _using_picamera2(config) else _open_capture(config)
-    runtime_window = RuntimeControlWindow(config, lambda updated: _save_session_metadata(updated, _session_dir(updated)))
+    if config.controls:
+        if _using_picamera2(config):
+            capture.apply_controls(config.controls)
+        else:
+            apply_controls(config.device_path, config.controls)
+
+    def _apply_live_settings(updated: SessionConfig) -> None:
+        if _using_picamera2(updated):
+            capture.apply_controls(updated.controls or {})
+        else:
+            apply_controls(updated.device_path, updated.controls or {})
+
+    runtime_window = RuntimeControlWindow(
+        config,
+        lambda updated: _save_session_metadata(updated, _session_dir(updated)),
+        apply_live_controls=_apply_live_settings,
+    )
 
     zoom = max(config.initial_zoom, 0.1)
     fullscreen = False
@@ -676,9 +712,6 @@ def run_headless(
     session_dir.mkdir(parents=True, exist_ok=True)
     _save_session_metadata(config, session_dir)
 
-    if config.controls:
-        apply_controls(config.device_path, config.controls)
-
     total_captures = capture_count if capture_count is not None else config.headless_capture_count
     delay = interval_seconds if interval_seconds is not None else config.headless_interval_seconds
     warmup = warmup_frames if warmup_frames is not None else config.headless_warmup_frames
@@ -691,6 +724,11 @@ def run_headless(
         raise ValueError("Headless warmup frames cannot be negative.")
 
     capture = Picamera2CaptureBackend(config) if _using_picamera2(config) else _open_capture(config)
+    if config.controls:
+        if _using_picamera2(config):
+            capture.apply_controls(config.controls)
+        else:
+            apply_controls(config.device_path, config.controls)
     saved_images: list[Path] = []
 
     try:
