@@ -1,6 +1,6 @@
 # Camera Controller
 
-`camera_controller` is a Linux-first camera capture tool built from the control logic in `gaussian_lensless_camera/src/camera.py` and `gaussian_lensless_camera/src/capture.py`, but reorganized into a standalone package with:
+`camera_controller` is a Ubuntu-first camera capture tool。
 
 - a pre-start setup window
 - support for changing camera format, resolution, exposure, brightness, and other V4L2 controls before streaming
@@ -27,7 +27,6 @@ sudo apt install v4l-utils python3-tk
 Install Python dependencies from the project root:
 
 ```bash
-cd /mnt/disk/projects/camera_controller
 python3 -m pip install -e . --no-build-isolation
 ```
 
@@ -42,14 +41,12 @@ python3 -m pip install . --no-build-isolation
 From the terminal:
 
 ```bash
-cd /mnt/disk/projects/camera_controller
 camera-controller
 ```
 
 You can also run it without installing the script:
 
 ```bash
-cd /mnt/disk/projects/camera_controller
 python3 .
 ```
 
@@ -225,23 +222,7 @@ Headless example:
 2. Run `camera-controller --config my_session.json --headless`.
 3. Check the configured save folder for the captured images and `session_config.json`.
 
-## 9. Relation to `gaussian_lensless_camera`
-
-This package was derived from the camera control logic in:
-
-- `gaussian_lensless_camera/src/camera.py`
-- `gaussian_lensless_camera/src/capture.py`
-
-The main changes are:
-
-- hard-coded parameters were removed
-- camera controls are discovered dynamically from V4L2
-- configuration happens before streaming starts
-- save location is selectable in the UI
-- preview controls are exposed through consistent keyboard shortcuts
-- the tool can be launched directly from the terminal as a standalone package
-
-## 10. Troubleshooting
+## 9. Troubleshooting
 
 ### `v4l2-ctl was not found`
 
@@ -271,7 +252,7 @@ Some webcams expose controls but do not honor every value through a given driver
 
 Make sure your user has camera access, for example through the `video` group.
 
-## 11. Developer Notes
+## 10. Developer Notes
 
 Main files in the project root:
 
