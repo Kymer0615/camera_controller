@@ -48,6 +48,7 @@ def _fourcc(codec: str) -> int:
 
 def _open_capture(config: SessionConfig) -> cv2.VideoCapture:
     capture = cv2.VideoCapture(config.device_index, cv2.CAP_V4L2)
+    capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     capture.set(cv2.CAP_PROP_FOURCC, _fourcc(config.pixel_format))
     if _is_raw_format(config.pixel_format):
         capture.set(cv2.CAP_PROP_CONVERT_RGB, 0)
@@ -446,14 +447,13 @@ def run_preview(config: SessionConfig) -> None:
         apply_controls(config.device_path, config.controls)
 
     capture = _open_capture(config)
-    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WINDOW_NAME, config.preview_width, config.preview_height)
     runtime_window = RuntimeControlWindow(config, lambda updated: _save_session_metadata(updated, _session_dir(updated)))
 
     zoom = max(config.initial_zoom, 0.1)
     fullscreen = False
     frame_counter = 0
     saved_images: list[Path] = []
+    window_initialized = False
 
     try:
         while True:
@@ -465,6 +465,10 @@ def run_preview(config: SessionConfig) -> None:
             if not ok:
                 raise RuntimeError("Failed to read a frame from the camera.")
             preview_frame, save_frame = _prepare_frame(frame, config.pixel_format, config.raw_processing_enabled)
+            if not window_initialized:
+                cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+                cv2.resizeWindow(WINDOW_NAME, config.preview_width, config.preview_height)
+                window_initialized = True
 
             display = _scale_frame(preview_frame, zoom)
             overlay = _add_overlay(
