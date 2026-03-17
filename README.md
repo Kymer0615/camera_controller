@@ -14,6 +14,8 @@ It targets UVC / V4L2 cameras on Linux and uses:
 - OpenCV for camera streaming, preview, and image saving
 - Tkinter for the setup interface
 
+Raw Bayer formats from Raspberry Pi cameras are also supported for preview and capture, including common global shutter formats such as `RG10`.
+
 ## 1. Requirements
 
 Install system packages first:
@@ -59,12 +61,14 @@ Use that window to configure:
 
 - `Camera`: choose a detected `/dev/video*` device
 - `Pixel Format`: choose a camera-supported format such as `MJPG` or `YUYV`
+- raw Bayer formats such as `RG10`, `BA10`, `RG12`, and related 8/10/12/16-bit Bayer modes are decoded for preview automatically
 - `Resolution`: choose one of the supported resolutions for the selected format
 - `Save Folder`: select where captured images will be written
 - `Prefix`: filename prefix for saved images
 - `Extension`: output image type such as `png` or `jpg`
 - `Initial Zoom`: preview zoom multiplier used when the stream opens
 - `Preview Size`: initial preview window size in pixels
+- `Basic raw processing`: toggle normalize+demosaic for raw Bayer formats; turn it off to keep a raw grayscale preview/capture path
 - `Camera Controls`: all active controls reported by `v4l2-ctl --list-ctrls-menus`
 
 ### Control Types
@@ -97,6 +101,7 @@ At the same time, a second Tk window named `Runtime Controls` opens. Use it duri
 
 - change live V4L2 control values
 - update save folder, filename prefix, image extension, and preview zoom
+- toggle basic raw processing on or off for Bayer formats without restarting the stream
 - apply changes without restarting the preview
 - save the current runtime state to a JSON config
 - load a saved config back into the running session
@@ -153,8 +158,15 @@ This file stores:
 - chosen resolution
 - preview size
 - initial zoom
+- raw processing mode
 - save directory
 - all configured camera control values
+
+When a raw Bayer format is selected:
+
+- with `Basic raw processing` enabled, preview frames are normalized and debayered for display
+- with `Basic raw processing` disabled, preview frames stay normalized grayscale and captures keep the raw single-channel data where supported
+- `jpg` and `bmp` captures are still saved as preview-compatible images because those formats are not a good fit for raw Bayer data
 
 ## 7. Export and Reuse Configurations
 

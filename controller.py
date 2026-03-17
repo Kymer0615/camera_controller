@@ -21,6 +21,25 @@ except ImportError:
 
 WINDOW_NAME = "Camera Preview"
 RUNTIME_WINDOW_NAME = "Runtime Controls"
+BAYER_CONVERSIONS = {
+    "BA81": cv2.COLOR_BAYER_BG2BGR,
+    "BGGR": cv2.COLOR_BAYER_BG2BGR,
+    "GBRG": cv2.COLOR_BAYER_GB2BGR,
+    "GRBG": cv2.COLOR_BAYER_GR2BGR,
+    "RGGB": cv2.COLOR_BAYER_RG2BGR,
+    "BG10": cv2.COLOR_BAYER_BG2BGR,
+    "GB10": cv2.COLOR_BAYER_GB2BGR,
+    "BA10": cv2.COLOR_BAYER_GR2BGR,
+    "RG10": cv2.COLOR_BAYER_RG2BGR,
+    "BG12": cv2.COLOR_BAYER_BG2BGR,
+    "GB12": cv2.COLOR_BAYER_GB2BGR,
+    "BA12": cv2.COLOR_BAYER_GR2BGR,
+    "RG12": cv2.COLOR_BAYER_RG2BGR,
+    "BG16": cv2.COLOR_BAYER_BG2BGR,
+    "GB16": cv2.COLOR_BAYER_GB2BGR,
+    "BA16": cv2.COLOR_BAYER_GR2BGR,
+    "RG16": cv2.COLOR_BAYER_RG2BGR,
+}
 
 
 def _fourcc(codec: str) -> int:
@@ -30,11 +49,60 @@ def _fourcc(codec: str) -> int:
 def _open_capture(config: SessionConfig) -> cv2.VideoCapture:
     capture = cv2.VideoCapture(config.device_index, cv2.CAP_V4L2)
     capture.set(cv2.CAP_PROP_FOURCC, _fourcc(config.pixel_format))
+    if _is_raw_format(config.pixel_format):
+        capture.set(cv2.CAP_PROP_CONVERT_RGB, 0)
     capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.resolution[0])
     capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.resolution[1])
     if not capture.isOpened():
         raise RuntimeError(f"Could not open camera {config.device_path}.")
     return capture
+
+
+def _is_raw_format(pixel_format: str) -> bool:
+    return pixel_format in BAYER_CONVERSIONS
+
+
+def _normalize_raw_frame(frame):
+    if getattr(frame.dtype, "kind", "") == "u" and getattr(frame.dtype, "itemsize", 0) == 1:
+        return frame
+    return cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+
+
+def _prepare_frame(frame, pixel_format: str, raw_processing_enabled: bool):
+    if frame is None:
+        raise RuntimeError("Camera returned an empty frame.")
+
+    if not _is_raw_format(pixel_format):
+        return frame, frame
+
+    if frame.ndim == 3 and frame.shape[2] == 1:
+        frame = frame[:, :, 0]
+    if frame.ndim != 2:
+        raise RuntimeError(
+            f"Unsupported raw frame shape {frame.shape!r} for pixel format {pixel_format}."
+        )
+
+    raw_frame = frame.copy()
+    preview_source = _normalize_raw_frame(raw_frame)
+    if raw_processing_enabled:
+        preview_frame = cv2.cvtColor(preview_source, BAYER_CONVERSIONS[pixel_format])
+    else:
+        preview_frame = cv2.cvtColor(preview_source, cv2.COLOR_GRAY2BGR)
+    return preview_frame, raw_frame
+
+
+def _write_frame(path: Path, preview_frame, save_frame, pixel_format: str, raw_processing_enabled: bool) -> bool:
+    extension = path.suffix.lower()
+    frame_to_save = save_frame
+    if _is_raw_format(pixel_format) and (raw_processing_enabled or extension in {".jpg", ".jpeg", ".bmp"}):
+        frame_to_save = preview_frame
+    return cv2.imwrite(str(path), frame_to_save)
+
+
+def _processing_label(pixel_format: str, raw_processing_enabled: bool) -> str:
+    if not _is_raw_format(pixel_format):
+        return "standard"
+    return "basic" if raw_processing_enabled else "raw"
 
 
 def _save_session_metadata(config: SessionConfig, session_dir: Path) -> None:
@@ -70,6 +138,7 @@ class RuntimeControlWindow:
         self.prefix_var = tk.StringVar(value=config.file_prefix)
         self.extension_var = tk.StringVar(value=config.image_extension)
         self.zoom_var = tk.StringVar(value=str(config.initial_zoom))
+        self.raw_processing_var = tk.BooleanVar(value=config.raw_processing_enabled)
         self.control_vars: dict[str, tk.Variable] = {}
         self.control_widgets: list[tk.Widget] = []
 
@@ -115,6 +184,15 @@ class RuntimeControlWindow:
 
         ttk.Label(top, text="Preview Zoom").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=6)
         ttk.Entry(top, textvariable=self.zoom_var).grid(row=4, column=1, sticky="ew", pady=6)
+
+        self.raw_processing_check = ttk.Checkbutton(
+            top,
+            text="Basic raw processing (normalize + demosaic)",
+            variable=self.raw_processing_var,
+        )
+        self.raw_processing_check.grid(row=4, column=2, columnspan=2, sticky="w", pady=6)
+        if not _is_raw_format(self.config.pixel_format):
+            self.raw_processing_check.configure(state="disabled")
 
         controls_frame = ttk.LabelFrame(self.root, text="Live Camera Controls", padding=8)
         controls_frame.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
@@ -250,6 +328,7 @@ class RuntimeControlWindow:
             initial_zoom=zoom,
             preview_width=self.config.preview_width,
             preview_height=self.config.preview_height,
+            raw_processing_enabled=bool(self.raw_processing_var.get()),
             headless_capture_count=self.config.headless_capture_count,
             headless_interval_seconds=self.config.headless_interval_seconds,
             headless_warmup_frames=self.config.headless_warmup_frames,
@@ -261,6 +340,7 @@ class RuntimeControlWindow:
         self.prefix_var.set(config.file_prefix)
         self.extension_var.set(config.image_extension)
         self.zoom_var.set(str(config.initial_zoom))
+        self.raw_processing_var.set(config.raw_processing_enabled)
         controls = config.controls or {}
         for name, value in controls.items():
             control = self.capabilities.controls.get(name)
@@ -305,6 +385,7 @@ class RuntimeControlWindow:
             self.config.file_prefix = updated.file_prefix
             self.config.image_extension = updated.image_extension
             self.config.initial_zoom = updated.initial_zoom
+            self.config.raw_processing_enabled = updated.raw_processing_enabled
             self.config.controls = updated.controls
             self.on_config_changed(self.config)
             self.status_var.set("Applied runtime settings")
@@ -383,9 +464,19 @@ def run_preview(config: SessionConfig) -> None:
             ok, frame = capture.read()
             if not ok:
                 raise RuntimeError("Failed to read a frame from the camera.")
+            preview_frame, save_frame = _prepare_frame(frame, config.pixel_format, config.raw_processing_enabled)
 
-            display = _scale_frame(frame, zoom)
-            overlay = _add_overlay(display, zoom, frame.shape[1], frame.shape[0], session_dir, len(saved_images))
+            display = _scale_frame(preview_frame, zoom)
+            overlay = _add_overlay(
+                display,
+                zoom,
+                preview_frame.shape[1],
+                preview_frame.shape[0],
+                session_dir,
+                len(saved_images),
+                config.pixel_format,
+                config.raw_processing_enabled,
+            )
             cv2.imshow(WINDOW_NAME, overlay)
 
             key = cv2.waitKey(1) & 0xFF
@@ -403,7 +494,13 @@ def run_preview(config: SessionConfig) -> None:
             elif key == ord("c"):
                 _save_session_metadata(config, session_dir)
                 path = _capture_path(config, session_dir, frame_counter)
-                if cv2.imwrite(str(path), frame):
+                if _write_frame(
+                    path,
+                    preview_frame,
+                    save_frame,
+                    config.pixel_format,
+                    config.raw_processing_enabled,
+                ):
                     saved_images.append(path)
                     frame_counter += 1
                     print(f"Saved image: {path}")
@@ -462,9 +559,16 @@ def run_headless(
             ok, frame = capture.read()
             if not ok:
                 raise RuntimeError("Failed to read a frame from the camera.")
+            preview_frame, save_frame = _prepare_frame(frame, config.pixel_format, config.raw_processing_enabled)
 
             path = _capture_path(config, session_dir, frame_counter)
-            if not cv2.imwrite(str(path), frame):
+            if not _write_frame(
+                path,
+                preview_frame,
+                save_frame,
+                config.pixel_format,
+                config.raw_processing_enabled,
+            ):
                 raise RuntimeError(f"Failed to save image to {path}.")
             saved_images.append(path)
             print(f"Saved image: {path}")
@@ -486,10 +590,21 @@ def _scale_frame(frame, zoom: float):
     return cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
 
 
-def _add_overlay(frame, zoom: float, width: int, height: int, output_dir: Path, save_count: int):
+def _add_overlay(
+    frame,
+    zoom: float,
+    width: int,
+    height: int,
+    output_dir: Path,
+    save_count: int,
+    pixel_format: str,
+    raw_processing_enabled: bool,
+):
     overlay = frame.copy()
     lines = [
         f"Resolution: {width}x{height}",
+        f"Format: {pixel_format}",
+        f"Processing: {_processing_label(pixel_format, raw_processing_enabled)}",
         f"Zoom: {zoom:.2f}x",
         f"Saved: {save_count}",
         f"Folder: {output_dir}",
@@ -547,6 +662,7 @@ def _load_cli_config(path: str) -> SessionConfig:
         initial_zoom=float(data.get("initial_zoom", 1.0)),
         preview_width=int(data.get("preview_width", 1280)),
         preview_height=int(data.get("preview_height", 720)),
+        raw_processing_enabled=bool(data.get("raw_processing_enabled", True)),
         headless_capture_count=int(data.get("headless_capture_count", 1)),
         headless_interval_seconds=float(data.get("headless_interval_seconds", 0.0)),
         headless_warmup_frames=int(data.get("headless_warmup_frames", 5)),

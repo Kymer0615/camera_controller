@@ -24,6 +24,7 @@ class SessionConfig:
     initial_zoom: float = 1.0
     preview_width: int = 1280
     preview_height: int = 720
+    raw_processing_enabled: bool = True
     headless_capture_count: int = 1
     headless_interval_seconds: float = 0.0
     headless_warmup_frames: int = 5
@@ -56,6 +57,7 @@ class ConfigWindow:
         self.zoom_var = tk.StringVar(value="1.0")
         self.preview_width_var = tk.StringVar(value="1280")
         self.preview_height_var = tk.StringVar(value="720")
+        self.raw_processing_var = tk.BooleanVar(value=True)
 
         self._build_layout()
         self._load_devices()
@@ -119,6 +121,13 @@ class ConfigWindow:
         preview_size.columnconfigure(1, weight=1)
         ttk.Entry(preview_size, textvariable=self.preview_width_var, width=10).grid(row=0, column=0, sticky="ew")
         ttk.Entry(preview_size, textvariable=self.preview_height_var, width=10).grid(row=0, column=1, sticky="ew", padx=(8, 0))
+
+        self.raw_processing_check = ttk.Checkbutton(
+            top,
+            text="Basic raw processing (normalize + demosaic)",
+            variable=self.raw_processing_var,
+        )
+        self.raw_processing_check.grid(row=5, column=0, columnspan=4, sticky="w", pady=6)
 
         controls_frame = ttk.LabelFrame(self.root, text="Camera Controls", padding=8)
         controls_frame.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
@@ -199,6 +208,7 @@ class ConfigWindow:
         self.resolution_combo["values"] = labels
         if labels and self.resolution_var.get() not in labels:
             self.resolution_var.set(labels[0])
+        self._sync_processing_toggle()
 
     def _selected_device(self) -> CameraDevice | None:
         if not self.devices:
@@ -209,6 +219,13 @@ class ConfigWindow:
             if label == current:
                 return device
         return self.devices[0]
+
+    def _sync_processing_toggle(self) -> None:
+        is_raw = self.format_var.get().startswith(("BA", "BG", "GB", "GR", "RG")) or self.format_var.get() == "BA81"
+        state = "normal" if is_raw else "disabled"
+        self.raw_processing_check.configure(state=state)
+        if not is_raw:
+            self.raw_processing_var.set(True)
 
     def _render_controls(self) -> None:
         for widget in self.control_widgets:
@@ -380,6 +397,7 @@ class ConfigWindow:
             initial_zoom=float(self.zoom_var.get()),
             preview_width=int(self.preview_width_var.get()),
             preview_height=int(self.preview_height_var.get()),
+            raw_processing_enabled=bool(self.raw_processing_var.get()),
             headless_capture_count=1,
             headless_interval_seconds=0.0,
             headless_warmup_frames=5,
@@ -419,4 +437,5 @@ class ConfigWindow:
         self.zoom_var.set(str(data.get("initial_zoom", self.zoom_var.get())))
         self.preview_width_var.set(str(data.get("preview_width", self.preview_width_var.get())))
         self.preview_height_var.set(str(data.get("preview_height", self.preview_height_var.get())))
+        self.raw_processing_var.set(bool(data.get("raw_processing_enabled", True)))
         self._apply_pending_import()
