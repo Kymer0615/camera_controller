@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 from dataclasses import asdict
 from datetime import datetime
 import json
@@ -45,9 +46,11 @@ _configure_qt_platform()
 
 try:
     from .config_ui import ConfigWindow, SessionConfig
+    from .picamera2_controls import controls_from_camera_controls
     from .v4l2 import ControlInfo, V4L2Error, apply_controls, get_capabilities, set_format
 except ImportError:
     from config_ui import ConfigWindow, SessionConfig
+    from picamera2_controls import controls_from_camera_controls
     from v4l2 import ControlInfo, V4L2Error, apply_controls, get_capabilities, set_format
 
 
@@ -151,7 +154,7 @@ def _normalize_main_frame(frame):
     if frame is None:
         raise RuntimeError("Camera returned an empty processed frame.")
     if frame.ndim == 3 and frame.shape[2] == 4:
-        return cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+        return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
     return frame
 
 
@@ -226,7 +229,7 @@ class Picamera2CaptureBackend:
         raw_format = _picamera2_raw_format(self.config.pixel_format)
         preview_resolution = self.config.preview_resolution or self.config.resolution
         configuration = self.camera.create_preview_configuration(
-            main={"size": preview_resolution, "format": "RGB888"},
+            main={"size": preview_resolution, "format": "XBGR8888"},
             raw={"size": self.config.resolution, "format": raw_format},
             sensor={
                 "output_size": self.config.resolution,
@@ -336,7 +339,21 @@ def _picamera2_controls_from_config(config: SessionConfig) -> dict[str, object]:
         controls["ExposureTime"] = int(config.pi_exposure_time_us)
     if not config.pi_auto_white_balance_enabled:
         controls["ColourGains"] = (float(config.pi_red_gain), float(config.pi_blue_gain))
+    for name, value in (config.controls or {}).items():
+        controls[name] = value
     return controls
+
+
+def _parse_control_value(raw_value: str, default: object) -> object:
+    try:
+        parsed = ast.literal_eval(raw_value)
+    except Exception:
+        parsed = raw_value
+    if isinstance(default, list):
+        return list(parsed) if isinstance(parsed, (list, tuple)) else parsed
+    if isinstance(default, tuple):
+        return tuple(parsed) if isinstance(parsed, (list, tuple)) else parsed
+    return parsed
 
 
 def _save_session_metadata(config: SessionConfig, session_dir: Path) -> None:
@@ -356,11 +373,12 @@ def _session_dir(config: SessionConfig) -> Path:
 
 
 class RuntimeControlWindow:
-    def __init__(self, config: SessionConfig, on_config_changed, apply_live_controls=None) -> None:
+    def __init__(self, config: SessionConfig, on_config_changed, apply_live_controls=None, control_specs=None) -> None:
         self.config = config
         self.on_config_changed = on_config_changed
         self.apply_live_controls = apply_live_controls
         self.capabilities = get_capabilities(config.device_path)
+        self.active_controls: dict[str, ControlInfo] = control_specs or self.capabilities.controls
         self.root = tk.Tk()
         self.root.title(RUNTIME_WINDOW_NAME)
         self.root.geometry("720x760")
@@ -609,7 +627,7 @@ class RuntimeControlWindow:
         self.control_vars.clear()
 
         row = 0
-        for name, control in sorted(self.capabilities.controls.items()):
+        for name, control in sorted(self.active_controls.items()):
             if "inactive" in control.flags:
                 continue
             label = ttk.Label(self.controls_container, text=self._format_control_label(control))
@@ -647,6 +665,24 @@ class RuntimeControlWindow:
             )
             return variable, widget
 
+        if control.kind == "float":
+            min_value = control.min_value if isinstance(control.min_value, (int, float)) else -999999.0
+            max_value = control.max_value if isinstance(control.max_value, (int, float)) else 999999.0
+            step = control.step if isinstance(control.step, (int, float)) else 0.1
+            variable = tk.DoubleVar(value=float(current_value if current_value is not None else min_value))
+            widget = ttk.Spinbox(
+                self.controls_container,
+                textvariable=variable,
+                from_=min_value,
+                to=max_value,
+                increment=step,
+            )
+            return variable, widget
+
+        if control.kind in {"tuple", "text"}:
+            variable = tk.StringVar(value=str(current_value))
+            return variable, ttk.Entry(self.controls_container, textvariable=variable)
+
         step = control.step or 1
         min_value = control.min_value if control.min_value is not None else -999999
         max_value = control.max_value if control.max_value is not None else 999999
@@ -669,8 +705,8 @@ class RuntimeControlWindow:
         return " ".join(chunks)
 
     def _collect_controls(self) -> dict[str, int]:
-        values: dict[str, int] = {}
-        for name, control in self.capabilities.controls.items():
+        values: dict[str, object] = {}
+        for name, control in self.active_controls.items():
             if "inactive" in control.flags or name not in self.control_vars:
                 continue
             variable = self.control_vars[name]
@@ -678,6 +714,10 @@ class RuntimeControlWindow:
                 values[name] = int(bool(variable.get()))
             elif control.kind == "menu":
                 values[name] = int(str(variable.get()).split(":", 1)[0].strip())
+            elif control.kind == "float":
+                values[name] = float(variable.get())
+            elif control.kind in {"tuple", "text"}:
+                values[name] = _parse_control_value(str(variable.get()), control.default)
             else:
                 values[name] = int(variable.get())
         return values
@@ -736,7 +776,7 @@ class RuntimeControlWindow:
         self._sync_pi_controls_enabled()
         controls = config.controls or {}
         for name, value in controls.items():
-            control = self.capabilities.controls.get(name)
+            control = self.active_controls.get(name)
             variable = self.control_vars.get(name)
             if control is None or variable is None:
                 continue
@@ -746,8 +786,10 @@ class RuntimeControlWindow:
                 label = control.menu_items.get(int(value))
                 if label is not None:
                     variable.set(f"{int(value)}: {label}")
+            elif control.kind in {"tuple", "text"}:
+                variable.set(str(value))
             else:
-                variable.set(int(value))
+                variable.set(value)
 
     def process_events(self) -> None:
         if self.closed:
@@ -965,6 +1007,7 @@ def _run_picamera2_preview(config: SessionConfig) -> None:
         config,
         lambda updated: _save_session_metadata(updated, _session_dir(updated)),
         apply_live_controls=_apply_live_settings,
+        control_specs=controls_from_camera_controls(capture.camera.camera_controls),
     )
     runtime_window.status_var.set("Pi preview running via Picamera2")
 

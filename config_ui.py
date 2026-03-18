@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -8,8 +9,10 @@ from tkinter import filedialog, messagebox, ttk
 
 try:
     from .v4l2 import CameraCapabilities, CameraDevice, ControlInfo, get_capabilities, list_devices
+    from .picamera2_controls import list_picamera2_controls, picamera2_available
 except ImportError:
     from v4l2 import CameraCapabilities, CameraDevice, ControlInfo, get_capabilities, list_devices
+    from picamera2_controls import list_picamera2_controls, picamera2_available
 
 RAW_FORMAT_PREFIXES = ("BA", "BG", "GB", "GR", "RG")
 RAW_FORMATS = {
@@ -64,7 +67,7 @@ class SessionConfig:
     headless_capture_count: int = 1
     headless_interval_seconds: float = 0.0
     headless_warmup_frames: int = 5
-    controls: dict[str, int] | None = None
+    controls: dict[str, object] | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2)
@@ -83,6 +86,8 @@ class ConfigWindow:
         self.control_vars: dict[str, tk.Variable] = {}
         self.control_widgets: list[tk.Widget] = []
         self.pending_import_data: dict | None = None
+        self.active_controls: dict[str, ControlInfo] = {}
+        self.picamera2_controls: dict[str, ControlInfo] = {}
 
         self.device_var = tk.StringVar()
         self.format_var = tk.StringVar()
@@ -306,7 +311,6 @@ class ConfigWindow:
                 preferred = "MJPG" if "MJPG" in formats else formats[0]
                 self.format_var.set(preferred)
             self._on_format_changed()
-        self._render_controls()
         self._apply_pending_import()
 
     def _on_format_changed(self) -> None:
@@ -324,6 +328,7 @@ class ConfigWindow:
             if not self.resolution_var.get() or self._looks_like_invalid_resolution(self.resolution_var.get()):
                 self.resolution_var.set(self._default_resolution_for_format(self.format_var.get()))
         self._sync_processing_toggle()
+        self._refresh_controls()
 
     def _selected_device(self) -> CameraDevice | None:
         if not self.devices:
@@ -387,11 +392,12 @@ class ConfigWindow:
             widget.destroy()
         self.control_widgets.clear()
         self.control_vars.clear()
-        if not self.capabilities:
+        self.active_controls = self._current_controls()
+        if not self.active_controls:
             return
 
         row = 0
-        for name, control in sorted(self.capabilities.controls.items()):
+        for name, control in sorted(self.active_controls.items()):
             if "inactive" in control.flags:
                 continue
             label = ttk.Label(self.controls_container, text=self._format_control_label(control))
@@ -430,6 +436,24 @@ class ConfigWindow:
             )
             return variable, widget
 
+        if control.kind == "float":
+            min_value = control.min_value if isinstance(control.min_value, (int, float)) else -999999.0
+            max_value = control.max_value if isinstance(control.max_value, (int, float)) else 999999.0
+            step = control.step if isinstance(control.step, (int, float)) else 0.1
+            variable = tk.DoubleVar(value=float(current_value if current_value is not None else min_value))
+            widget = ttk.Spinbox(
+                self.controls_container,
+                textvariable=variable,
+                from_=min_value,
+                to=max_value,
+                increment=step,
+            )
+            return variable, widget
+
+        if control.kind in {"tuple", "text"}:
+            variable = tk.StringVar(value=str(current_value))
+            return variable, ttk.Entry(self.controls_container, textvariable=variable)
+
         step = control.step or 1
         min_value = control.min_value if control.min_value is not None else -999999
         max_value = control.max_value if control.max_value is not None else 999999
@@ -452,10 +476,10 @@ class ConfigWindow:
         return " ".join(chunks)
 
     def _collect_controls(self) -> dict[str, int]:
-        collected: dict[str, int] = {}
-        if not self.capabilities:
+        collected: dict[str, object] = {}
+        if not self.active_controls:
             return collected
-        for name, control in self.capabilities.controls.items():
+        for name, control in self.active_controls.items():
             if name not in self.control_vars or "inactive" in control.flags:
                 continue
             variable = self.control_vars[name]
@@ -464,9 +488,34 @@ class ConfigWindow:
             elif control.kind == "menu":
                 raw = str(variable.get()).split(":", 1)[0].strip()
                 collected[name] = int(raw)
+            elif control.kind == "float":
+                collected[name] = float(variable.get())
+            elif control.kind in {"tuple", "text"}:
+                collected[name] = _parse_control_value(str(variable.get()), control.default)
             else:
                 collected[name] = int(variable.get())
         return collected
+
+    def _refresh_controls(self) -> None:
+        if self._uses_picamera2_controls():
+            try:
+                device = self._selected_device()
+                self.picamera2_controls = list_picamera2_controls(device.index if device else 0)
+            except Exception:
+                self.picamera2_controls = {}
+        else:
+            self.picamera2_controls = {}
+        self._render_controls()
+
+    def _uses_picamera2_controls(self) -> bool:
+        return self._is_raw_format(self.format_var.get()) and picamera2_available()
+
+    def _current_controls(self) -> dict[str, ControlInfo]:
+        if self._uses_picamera2_controls() and self.picamera2_controls:
+            return self.picamera2_controls
+        if self.capabilities:
+            return self.capabilities.controls
+        return {}
 
     def _import_config(self) -> None:
         path = filedialog.askopenfilename(
@@ -518,7 +567,7 @@ class ConfigWindow:
         controls = data.get("controls", {})
         for name, value in controls.items():
             variable = self.control_vars.get(name)
-            control = self.capabilities.controls.get(name) if self.capabilities else None
+            control = self.active_controls.get(name)
             if variable is None or control is None:
                 continue
             if control.kind == "bool":
@@ -527,8 +576,10 @@ class ConfigWindow:
                 label = control.menu_items.get(int(value))
                 if label is not None:
                     variable.set(f"{int(value)}: {label}")
+            elif control.kind in {"tuple", "text"}:
+                variable.set(str(value))
             else:
-                variable.set(int(value))
+                variable.set(value)
 
         self.pending_import_data = None
 
@@ -627,3 +678,15 @@ class ConfigWindow:
         self.pi_sharpness_var.set(str(data.get("pi_sharpness", self.pi_sharpness_var.get())))
         self._sync_pi_control_state()
         self._apply_pending_import()
+
+
+def _parse_control_value(raw_value: str, default: object) -> object:
+    try:
+        parsed = ast.literal_eval(raw_value)
+    except Exception:
+        parsed = raw_value
+    if isinstance(default, list):
+        return list(parsed) if isinstance(parsed, (list, tuple)) else parsed
+    if isinstance(default, tuple):
+        return tuple(parsed) if isinstance(parsed, (list, tuple)) else parsed
+    return parsed

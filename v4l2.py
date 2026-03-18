@@ -17,11 +17,11 @@ class CameraDevice:
 class ControlInfo:
     name: str
     kind: str
-    min_value: int | None = None
-    max_value: int | None = None
-    step: int | None = None
-    default: int | None = None
-    value: int | None = None
+    min_value: object | None = None
+    max_value: object | None = None
+    step: object | None = None
+    default: object | None = None
+    value: object | None = None
     flags: list[str] = field(default_factory=list)
     menu_items: dict[int, str] = field(default_factory=dict)
 
