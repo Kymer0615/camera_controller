@@ -965,6 +965,14 @@ def _add_overlay(
     fps: float,
 ):
     overlay = frame.copy()
+    frame_height, frame_width = frame.shape[:2]
+    scale_basis = min(frame_width, frame_height)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = max(0.55, min(1.3, scale_basis / 900.0))
+    thickness = max(1, int(round(font_scale * 2)))
+    line_height = max(24, int(round(34 * font_scale)))
+    padding = max(10, int(round(16 * font_scale)))
+    margin = max(8, int(round(10 * font_scale)))
     lines = [
         f"Resolution: {width}x{height}",
         f"Format: {pixel_format}",
@@ -976,20 +984,22 @@ def _add_overlay(
         "Keys: c capture | d delete last | +/- zoom | 0 reset | f fullscreen | h help | q quit",
         "Runtime controls window: adjust live parameters and save/load configs",
     ]
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.7
-    thickness = 1
-    line_height = 28
-    x = 16
-    y = 32
+    x = margin + padding
+    y = margin + padding + line_height // 2
     text_width = 0
     for line in lines:
         (line_width, _line_height), _baseline = cv2.getTextSize(line, font, font_scale, thickness)
         text_width = max(text_width, line_width)
-    panel_width = min(text_width + 24, frame.shape[1] - 16)
-    panel_height = min((line_height * len(lines)) + 18, frame.shape[0] - 16)
-    cv2.rectangle(overlay, (8, 8), (8 + panel_width, 8 + panel_height), (0, 0, 0), -1)
-    cv2.addWeighted(overlay, 0.35, frame, 0.65, 0, overlay)
+    panel_width = min(text_width + (padding * 2), frame_width - (margin * 2))
+    panel_height = min((line_height * len(lines)) + (padding * 2), frame_height - (margin * 2))
+    cv2.rectangle(
+        overlay,
+        (margin, margin),
+        (margin + panel_width, margin + panel_height),
+        (0, 0, 0),
+        -1,
+    )
+    cv2.addWeighted(overlay, 0.45, frame, 0.55, 0, overlay)
     for line in lines:
         cv2.putText(
             overlay,
