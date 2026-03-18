@@ -272,7 +272,7 @@ class Picamera2CaptureBackend:
 
     def apply_session_config(self, config: SessionConfig) -> None:
         self.config = config
-        controls = _picamera2_controls_from_config(config)
+        controls = self._sanitize_controls(_picamera2_controls_from_config(config))
         if controls:
             self.camera.set_controls(controls)
 
@@ -291,6 +291,33 @@ class Picamera2CaptureBackend:
         if self.preview_started:
             self.camera.stop_preview()
         self.camera.close()
+
+    def _sanitize_controls(self, requested: dict[str, object]) -> dict[str, object]:
+        specs = controls_from_camera_controls(self.camera.camera_controls)
+        sanitized: dict[str, object] = {}
+        for name, value in requested.items():
+            if value is None:
+                continue
+            spec = specs.get(name)
+            if spec is None:
+                continue
+            if spec.kind == "tuple":
+                if isinstance(value, (tuple, list)):
+                    sanitized[name] = tuple(value)
+                continue
+            if spec.kind == "float":
+                if isinstance(value, (int, float)):
+                    sanitized[name] = float(value)
+                continue
+            if spec.kind == "int":
+                if isinstance(value, int):
+                    sanitized[name] = int(value)
+                continue
+            if spec.kind == "bool":
+                sanitized[name] = bool(value)
+                continue
+            sanitized[name] = value
+        return sanitized
 
 
 class FrameRateTracker:
@@ -340,6 +367,8 @@ def _picamera2_controls_from_config(config: SessionConfig) -> dict[str, object]:
     if not config.pi_auto_white_balance_enabled:
         controls["ColourGains"] = (float(config.pi_red_gain), float(config.pi_blue_gain))
     for name, value in (config.controls or {}).items():
+        if value is None:
+            continue
         controls[name] = value
     return controls
 
@@ -719,7 +748,10 @@ class RuntimeControlWindow:
             elif control.kind == "float":
                 values[name] = float(variable.get())
             elif control.kind in {"tuple", "text"}:
-                values[name] = _parse_control_value(str(variable.get()), control.default)
+                parsed = _parse_control_value(str(variable.get()).strip(), control.default)
+                if parsed is None or parsed == "":
+                    continue
+                values[name] = parsed
             else:
                 values[name] = int(variable.get())
         return values

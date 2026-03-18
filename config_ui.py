@@ -493,7 +493,10 @@ class ConfigWindow:
             elif control.kind == "float":
                 collected[name] = float(variable.get())
             elif control.kind in {"tuple", "text"}:
-                collected[name] = _parse_control_value(str(variable.get()), control.default)
+                parsed = _parse_control_value(str(variable.get()).strip(), control.default)
+                if parsed is None or parsed == "":
+                    continue
+                collected[name] = parsed
             else:
                 collected[name] = int(variable.get())
         return collected
