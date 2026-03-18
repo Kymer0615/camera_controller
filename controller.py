@@ -13,9 +13,10 @@ from tkinter import filedialog, messagebox, ttk
 import cv2
 
 try:
-    from picamera2 import Picamera2
+    from picamera2 import Picamera2, Preview
 except ImportError:
     Picamera2 = None
+    Preview = None
 
 
 def _configure_qt_platform() -> None:
@@ -209,9 +210,9 @@ class Picamera2CaptureBackend:
             raise RuntimeError("Picamera2 is not available.")
         self.config = config
         self.camera = Picamera2()
+        self.started = False
+        self.preview_started = False
         self._configure()
-        self.camera.start()
-        time.sleep(0.2)
 
     def _configure(self) -> None:
         raw_format = _picamera2_raw_format(self.config.pixel_format)
@@ -226,6 +227,24 @@ class Picamera2CaptureBackend:
             buffer_count=3,
         )
         self.camera.configure(configuration)
+
+    def start(self, with_preview: bool = False) -> None:
+        if with_preview:
+            self.start_preview()
+        self.camera.start()
+        self.started = True
+        time.sleep(0.2)
+
+    def start_preview(self) -> None:
+        if self.preview_started or Preview is None:
+            return
+        preview_type = Preview.QTGL if (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")) else Preview.DRM
+        self.camera.start_preview(
+            preview_type,
+            width=self.config.preview_width,
+            height=self.config.preview_height,
+        )
+        self.preview_started = True
 
     def apply_controls(self, values: dict[str, int]) -> None:
         controls = _picamera2_controls_from_v4l2(values)
@@ -248,7 +267,10 @@ class Picamera2CaptureBackend:
         return _crop_raw_frame(raw_frame, self.config.resolution[0], self.config.resolution[1])
 
     def release(self) -> None:
-        self.camera.stop()
+        if self.started:
+            self.camera.stop()
+        if self.preview_started:
+            self.camera.stop_preview()
         self.camera.close()
 
 
@@ -330,6 +352,9 @@ class RuntimeControlWindow:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self.closed = False
+        self.capture_requested = False
+        self.delete_requested = False
+        self.quit_requested = False
         self.status_var = tk.StringVar(value="Ready")
         self.save_dir_var = tk.StringVar(value=config.save_directory)
         self.prefix_var = tk.StringVar(value=config.file_prefix)
@@ -489,9 +514,17 @@ class RuntimeControlWindow:
         ttk.Label(bottom, textvariable=self.status_var).grid(row=0, column=0, sticky="w")
         actions = ttk.Frame(bottom)
         actions.grid(row=0, column=1, sticky="e")
-        ttk.Button(actions, text="Load Config", command=self.load_config_dialog).grid(row=0, column=0)
-        ttk.Button(actions, text="Save Config", command=self.save_config_dialog).grid(row=0, column=1, padx=(8, 0))
-        ttk.Button(actions, text="Apply", command=self.apply_current_settings).grid(row=0, column=2, padx=(8, 0))
+        ttk.Button(actions, text="Capture", command=self.request_capture).grid(row=0, column=0)
+        ttk.Button(actions, text="Delete Last", command=self.request_delete).grid(row=0, column=1, padx=(8, 0))
+        ttk.Button(actions, text="Load Config", command=self.load_config_dialog).grid(row=0, column=2, padx=(8, 0))
+        ttk.Button(actions, text="Save Config", command=self.save_config_dialog).grid(row=0, column=3, padx=(8, 0))
+        ttk.Button(actions, text="Apply", command=self.apply_current_settings).grid(row=0, column=4, padx=(8, 0))
+        ttk.Button(actions, text="Quit Preview", command=self.request_quit).grid(row=0, column=5, padx=(8, 0))
+
+        self.root.bind("<KeyPress-c>", lambda _event: self.request_capture())
+        self.root.bind("<KeyPress-d>", lambda _event: self.request_delete())
+        self.root.bind("<KeyPress-q>", lambda _event: self.request_quit())
+        self.root.bind("<Escape>", lambda _event: self.request_quit())
 
     def _on_controls_configure(self, _event: tk.Event) -> None:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -528,6 +561,30 @@ class RuntimeControlWindow:
         selected = filedialog.askdirectory(initialdir=self.save_dir_var.get() or str(Path.cwd()))
         if selected:
             self.save_dir_var.set(selected)
+
+    def request_capture(self) -> None:
+        self.capture_requested = True
+
+    def request_delete(self) -> None:
+        self.delete_requested = True
+
+    def request_quit(self) -> None:
+        self.quit_requested = True
+
+    def consume_capture_request(self) -> bool:
+        requested = self.capture_requested
+        self.capture_requested = False
+        return requested
+
+    def consume_delete_request(self) -> bool:
+        requested = self.delete_requested
+        self.delete_requested = False
+        return requested
+
+    def consume_quit_request(self) -> bool:
+        requested = self.quit_requested
+        self.quit_requested = False
+        return requested
 
     def _render_controls(self) -> None:
         for widget in self.control_widgets:
@@ -708,7 +765,18 @@ class RuntimeControlWindow:
             self.config.file_prefix = updated.file_prefix
             self.config.image_extension = updated.image_extension
             self.config.initial_zoom = updated.initial_zoom
+            self.config.preview_resolution = updated.preview_resolution
             self.config.raw_processing_enabled = updated.raw_processing_enabled
+            self.config.pi_auto_exposure_enabled = updated.pi_auto_exposure_enabled
+            self.config.pi_exposure_time_us = updated.pi_exposure_time_us
+            self.config.pi_analogue_gain = updated.pi_analogue_gain
+            self.config.pi_auto_white_balance_enabled = updated.pi_auto_white_balance_enabled
+            self.config.pi_red_gain = updated.pi_red_gain
+            self.config.pi_blue_gain = updated.pi_blue_gain
+            self.config.pi_brightness = updated.pi_brightness
+            self.config.pi_contrast = updated.pi_contrast
+            self.config.pi_saturation = updated.pi_saturation
+            self.config.pi_sharpness = updated.pi_sharpness
             self.config.controls = updated.controls
             self.on_config_changed(self.config)
             self.status_var.set("Applied runtime settings")
@@ -764,23 +832,19 @@ class RuntimeControlWindow:
 
 
 def run_preview(config: SessionConfig) -> None:
+    if _using_picamera2(config):
+        _run_picamera2_preview(config)
+        return
+
     session_dir = _session_dir(config)
     _save_session_metadata(config, session_dir)
 
-    capture = Picamera2CaptureBackend(config) if _using_picamera2(config) else _open_capture(config)
+    capture = _open_capture(config)
     if config.controls:
-        if _using_picamera2(config):
-            capture.apply_session_config(config)
-        else:
-            apply_controls(config.device_path, config.controls)
-    elif _using_picamera2(config):
-        capture.apply_session_config(config)
+        apply_controls(config.device_path, config.controls)
 
     def _apply_live_settings(updated: SessionConfig) -> None:
-        if _using_picamera2(updated):
-            capture.apply_session_config(updated)
-        else:
-            apply_controls(updated.device_path, updated.controls or {})
+        apply_controls(updated.device_path, updated.controls or {})
 
     runtime_window = RuntimeControlWindow(
         config,
@@ -801,14 +865,10 @@ def run_preview(config: SessionConfig) -> None:
             zoom = runtime_window.current_zoom()
             session_dir = _session_dir(config)
 
-            if _using_picamera2(config):
-                preview_frame = capture.read()
-                save_frame = preview_frame if config.raw_processing_enabled else None
-            else:
-                ok, frame = capture.read()
-                if not ok:
-                    raise RuntimeError("Failed to read a frame from the camera.")
-                preview_frame, save_frame = _prepare_frame(frame, config.pixel_format, config.raw_processing_enabled)
+            ok, frame = capture.read()
+            if not ok:
+                raise RuntimeError("Failed to read a frame from the camera.")
+            preview_frame, save_frame = _prepare_frame(frame, config.pixel_format, config.raw_processing_enabled)
             if not window_initialized:
                 cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
                 cv2.resizeWindow(WINDOW_NAME, config.preview_width, config.preview_height)
@@ -830,7 +890,7 @@ def run_preview(config: SessionConfig) -> None:
             cv2.imshow(WINDOW_NAME, overlay)
 
             key = cv2.waitKey(1) & 0xFF
-            if key in (ord("q"), 27):
+            if key in (ord("q"), 27) or runtime_window.consume_quit_request():
                 break
             if key in (ord("+"), ord("=")):
                 zoom = min(zoom * 1.25, 16.0)
@@ -841,11 +901,9 @@ def run_preview(config: SessionConfig) -> None:
             elif key == ord("0"):
                 zoom = 1.0
                 runtime_window.set_zoom(zoom)
-            elif key == ord("c"):
+            elif key == ord("c") or runtime_window.consume_capture_request():
                 _save_session_metadata(config, session_dir)
                 path = _capture_path(config, session_dir, frame_counter)
-                if _using_picamera2(config):
-                    save_frame = capture.capture_for_save()
                 if _write_frame(
                     path,
                     preview_frame,
@@ -856,7 +914,7 @@ def run_preview(config: SessionConfig) -> None:
                     saved_images.append(path)
                     frame_counter += 1
                     print(f"Saved image: {path}")
-            elif key in (ord("d"), 8, 127):
+            elif key in (ord("d"), 8, 127) or runtime_window.consume_delete_request():
                 if saved_images:
                     last = saved_images.pop()
                     if last.exists():
@@ -872,6 +930,64 @@ def run_preview(config: SessionConfig) -> None:
         runtime_window.close()
         capture.release()
         cv2.destroyAllWindows()
+
+
+def _run_picamera2_preview(config: SessionConfig) -> None:
+    session_dir = _session_dir(config)
+    _save_session_metadata(config, session_dir)
+
+    capture = Picamera2CaptureBackend(config)
+    capture.start(with_preview=True)
+    capture.apply_session_config(config)
+    saved_images: list[Path] = []
+    frame_counter = 0
+
+    def _apply_live_settings(updated: SessionConfig) -> None:
+        capture.apply_session_config(updated)
+
+    runtime_window = RuntimeControlWindow(
+        config,
+        lambda updated: _save_session_metadata(updated, _session_dir(updated)),
+        apply_live_controls=_apply_live_settings,
+    )
+    runtime_window.status_var.set("Pi preview running via Picamera2")
+
+    try:
+        while True:
+            runtime_window.process_events()
+            session_dir = _session_dir(config)
+
+            if runtime_window.consume_quit_request():
+                break
+
+            if runtime_window.consume_capture_request():
+                _save_session_metadata(config, session_dir)
+                path = _capture_path(config, session_dir, frame_counter)
+                save_frame = capture.capture_for_save()
+                preview_frame = save_frame if config.raw_processing_enabled else _normalize_main_frame(capture.read())
+                if _write_frame(
+                    path,
+                    preview_frame,
+                    save_frame,
+                    config.pixel_format,
+                    config.raw_processing_enabled,
+                ):
+                    saved_images.append(path)
+                    frame_counter += 1
+                    runtime_window.status_var.set(f"Saved image: {path.name}")
+                    print(f"Saved image: {path}")
+
+            if runtime_window.consume_delete_request() and saved_images:
+                last = saved_images.pop()
+                if last.exists():
+                    last.unlink()
+                    runtime_window.status_var.set(f"Deleted image: {last.name}")
+                    print(f"Deleted image: {last}")
+
+            time.sleep(0.02)
+    finally:
+        runtime_window.close()
+        capture.release()
 
 
 def run_headless(
@@ -896,6 +1012,8 @@ def run_headless(
         raise ValueError("Headless warmup frames cannot be negative.")
 
     capture = Picamera2CaptureBackend(config) if _using_picamera2(config) else _open_capture(config)
+    if _using_picamera2(config):
+        capture.start(with_preview=False)
     if config.controls:
         if _using_picamera2(config):
             capture.apply_session_config(config)
