@@ -13,6 +13,19 @@ except ImportError:
     from v4l2 import ControlInfo
 
 
+PI_DEDICATED_CONTROL_NAMES = {
+    "AeEnable",
+    "ExposureTime",
+    "AnalogueGain",
+    "AwbEnable",
+    "ColourGains",
+    "Brightness",
+    "Contrast",
+    "Saturation",
+    "Sharpness",
+}
+
+
 @dataclass(slots=True)
 class Picamera2ControlSet:
     controls: dict[str, ControlInfo]
@@ -35,6 +48,8 @@ def list_picamera2_controls(camera_index: int = 0) -> dict[str, ControlInfo]:
 def controls_from_camera_controls(camera_controls: dict[str, tuple[object, object, object]]) -> dict[str, ControlInfo]:
     controls: dict[str, ControlInfo] = {}
     for name, descriptor in sorted(camera_controls.items()):
+        if name in PI_DEDICATED_CONTROL_NAMES:
+            continue
         if not isinstance(descriptor, tuple) or len(descriptor) != 3:
             continue
         min_value, max_value, default = descriptor
