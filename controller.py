@@ -33,6 +33,14 @@ def _configure_qt_platform() -> None:
         os.environ["QT_QPA_PLATFORM"] = "xcb"
 
 
+def _sanitize_qt_env_for_picamera2() -> None:
+    # OpenCV wheels often export Qt plugin paths that break Picamera2's own Qt preview.
+    for name in ("QT_QPA_PLATFORM_PLUGIN_PATH", "QT_PLUGIN_PATH"):
+        value = os.environ.get(name, "")
+        if "cv2" in value and "qt" in value:
+            os.environ.pop(name, None)
+
+
 _configure_qt_platform()
 
 try:
@@ -238,12 +246,20 @@ class Picamera2CaptureBackend:
     def start_preview(self) -> None:
         if self.preview_started or Preview is None:
             return
+        _sanitize_qt_env_for_picamera2()
         preview_type = Preview.QTGL if (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")) else Preview.DRM
-        self.camera.start_preview(
-            preview_type,
-            width=self.config.preview_width,
-            height=self.config.preview_height,
-        )
+        try:
+            self.camera.start_preview(
+                preview_type,
+                width=self.config.preview_width,
+                height=self.config.preview_height,
+            )
+        except Exception:
+            self.camera.start_preview(
+                Preview.DRM,
+                width=self.config.preview_width,
+                height=self.config.preview_height,
+            )
         self.preview_started = True
 
     def apply_controls(self, values: dict[str, int]) -> None:
