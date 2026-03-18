@@ -53,12 +53,12 @@ def controls_from_camera_controls(camera_controls: dict[str, tuple[object, objec
 
 def _control_kind(default: object, min_value: object, max_value: object) -> str:
     values = (default, min_value, max_value)
+    if any(isinstance(value, (tuple, list)) for value in values):
+        return "tuple"
     if any(isinstance(value, bool) for value in values):
         return "bool"
     if any(isinstance(value, float) for value in values):
         return "float"
     if any(isinstance(value, int) for value in values):
         return "int"
-    if isinstance(default, (tuple, list)):
-        return "tuple"
     return "text"

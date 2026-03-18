@@ -669,7 +669,8 @@ class RuntimeControlWindow:
             min_value = control.min_value if isinstance(control.min_value, (int, float)) else -999999.0
             max_value = control.max_value if isinstance(control.max_value, (int, float)) else 999999.0
             step = control.step if isinstance(control.step, (int, float)) else 0.1
-            variable = tk.DoubleVar(value=float(current_value if current_value is not None else min_value))
+            initial_value = current_value if isinstance(current_value, (int, float)) else min_value
+            variable = tk.DoubleVar(value=float(initial_value))
             widget = ttk.Spinbox(
                 self.controls_container,
                 textvariable=variable,
@@ -686,7 +687,8 @@ class RuntimeControlWindow:
         step = control.step or 1
         min_value = control.min_value if control.min_value is not None else -999999
         max_value = control.max_value if control.max_value is not None else 999999
-        variable = tk.IntVar(value=current_value if current_value is not None else min_value)
+        initial_value = current_value if isinstance(current_value, int) else min_value
+        variable = tk.IntVar(value=initial_value)
         widget = ttk.Spinbox(
             self.controls_container,
             textvariable=variable,
